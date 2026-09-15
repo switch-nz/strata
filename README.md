@@ -189,6 +189,11 @@ Results are not guaranteed. Testing is ongoing rather than finished, and none
 of it has been independently validated. Corroborate anything that matters
 against another tool before you rely on it.
 
+## Contributing
+
+PRs are welcome — read [`CONTRIBUTING.md`](CONTRIBUTING.md) first for the
+rules the project is reviewed against, and what a PR needs to include.
+
 ## Security
 
 Vulnerabilities are handled privately — see

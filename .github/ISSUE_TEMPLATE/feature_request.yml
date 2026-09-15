@@ -1,0 +1,34 @@
+name: Feature request
+description: Propose a capability or an improvement to one
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: |
+        The situation that needs solving, not the solution. What were you
+        examining, and what got in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What you'd like Strata to do about it.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds tried
+      description: How you handled it with the current release, if you did.
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints
+      options:
+        - label: I believe this fits the standard-library-only rule
+          required: false
+        - label: I believe this can be done without network access
+          required: false

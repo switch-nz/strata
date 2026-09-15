@@ -1,0 +1,56 @@
+name: Bug report
+description: Something opened wrong, rendered wrong, or crashed
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. Details that pinpoint the failure are
+        worth more than broad ones — a synthetic image or case file that
+        reproduces the bug is ideal. **Never attach real evidence.**
+  - type: textarea
+    id: what-opened
+    attributes:
+      label: What was open
+      description: The evidence, format, filesystem, or view involved.
+      placeholder: e.g. a 32 MB synthetic EWF with a damaged GPT
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+      description: What you expected to see, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: From `python3 run.py` to the failure, numbered.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: e.g. Windows 11, macOS 14.5, Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: e.g. 3.12.3
+    validations:
+      required: true
+  - type: textarea
+    id: repro-evidence
+    attributes:
+      label: Reproducer (optional)
+      description: A synthetic file or the exact command sequence. No real evidence.
+  - type: textarea
+    id: console
+    attributes:
+      label: Console output (optional)
+      render: text
