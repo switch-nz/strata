@@ -172,7 +172,7 @@ python3 run.py --port 9000 --host 0.0.0.0       # serve the interface to another
 | `image` | none | evidence to open at start |
 | `--examiner` | `$STRATA_EXAMINER` | name recorded against every action |
 | `--port` | `8722` | |
-| `--host` | `127.0.0.1` | |
+| `--host` | `127.0.0.1` | serving to other machines is **unauthenticated** — anyone who can reach the port can drive the session; use only on a trusted network |
 | `--browser` | off | open a browser at the interface |
 
 Preferences are kept per examiner beside the application, never in a case.
@@ -188,6 +188,12 @@ and it will be refined — expect rough edges, and expect some of it to change.
 Results are not guaranteed. Testing is ongoing rather than finished, and none
 of it has been independently validated. Corroborate anything that matters
 against another tool before you rely on it.
+
+## Security
+
+Vulnerabilities are handled privately — see
+[`SECURITY.md`](SECURITY.md) for how to report one. Please do not open
+public issues for anything exploitable.
 
 ## Licence
 
