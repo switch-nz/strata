@@ -1,0 +1,13 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/switch-nz/strata/security/advisories/new
+    about: >
+      Report privately instead of opening an issue. Anything exploitable
+      against a forensic tool belongs in the private channel — see SECURITY.md.
+  - name: Incorrect results rather than a crash
+    url: https://github.com/switch-nz/strata/issues/new?template=bug_report.yml
+    about: >
+      A parser that reads an image exactly as its format specifies but reports
+      something misleading is a correctness bug — file it here, with the
+      evidence that shows it.

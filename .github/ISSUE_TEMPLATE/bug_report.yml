@@ -1,0 +1,81 @@
+name: Bug report
+description: Something behaves differently than it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not attach real case material. If a reproduction needs
+        evidence, use a synthetic image.
+
+        Security problems should go to the private channel in SECURITY.md
+        rather than here.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, and what the tool did instead of what you expected.
+      placeholder: |
+        Opened …, selected …, and the listing showed … where I expected ….
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: input
+    id: evidence
+    attributes:
+      label: Evidence it happened on
+      description: >
+        Format and filesystem, and whether it is synthetic or real. If you can
+        share a synthetic image that reproduces it, say so here.
+      placeholder: E01 of an NTFS volume, synthetic
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11 / Ubuntu 24.04 / macOS 14.5
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: The output of `python3 --version`.
+      placeholder: "3.11.9"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Strata version
+      description: Shown beside the wordmark, top left.
+      placeholder: "0.1.0"
+    validations:
+      required: false
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Anything in the console
+      description: >
+        Errors from the terminal running the server, or from the browser's
+        developer console. Rendered as code, no backticks needed.
+      render: text
+    validations:
+      required: false

@@ -1468,6 +1468,9 @@ dialog { position: relative; }
   border-radius: 50%;
   border: 1px solid var(--line);
 }
+/* Literals rather than custom properties: each swatch previews a theme other
+   than the active one, so it cannot resolve against :root. Keep in step with
+   the --panel and --amber values of the matching theme block above. */
 .theme-swatch[data-swatch="dark"]     { background: conic-gradient(#171f26 0deg 180deg, #e0a14a 180deg 360deg); }
 .theme-swatch[data-swatch="light"]    { background: conic-gradient(#ffffff 0deg 180deg, #9a6510 180deg 360deg); }
 .theme-swatch[data-swatch="midnight"] { background: conic-gradient(#0a0d10 0deg 180deg, #e0a14a 180deg 360deg); }

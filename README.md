@@ -136,7 +136,7 @@ separate from the tool's suggestions, and never promotes one to the other.
   HTML, SVG or scripts** — active content is removed before rendering and what
   was removed is listed
 - Marks, tags and categories; saved searches; a command palette; keyboard
-  shortcuts; light and dark themes
+  shortcuts; six themes including two high-contrast
 - Offsets can be shown from the start of the image, the volume, or the file
 
 ## Cases
@@ -172,8 +172,14 @@ python3 run.py --port 9000 --host 0.0.0.0       # serve the interface to another
 | `image` | none | evidence to open at start |
 | `--examiner` | `$STRATA_EXAMINER` | name recorded against every action |
 | `--port` | `8722` | |
-| `--host` | `127.0.0.1` | |
+| `--host` | `127.0.0.1` | reachable only from this machine by default |
 | `--browser` | off | open a browser at the interface |
+
+**Serving to other machines is unauthenticated.** `--host 0.0.0.0` gives
+anyone who can reach the port the full interface — the open session, the
+evidence, and the case. There is no login and no encryption in transit. Use it
+only on a network you trust, and prefer an SSH tunnel. See
+[`SECURITY.md`](SECURITY.md).
 
 Preferences are kept per examiner beside the application, never in a case.
 Set `STRATA_CONFIG_DIR` to put them somewhere else.
@@ -188,6 +194,14 @@ and it will be refined — expect rough edges, and expect some of it to change.
 Results are not guaranteed. Testing is ongoing rather than finished, and none
 of it has been independently validated. Corroborate anything that matters
 against another tool before you rely on it.
+
+## Contributing and security
+
+Issues and patches are welcome — [`CONTRIBUTING.md`](CONTRIBUTING.md) covers
+running it locally and the rules a change is reviewed against.
+
+Security problems go to the private channel described in
+[`SECURITY.md`](SECURITY.md), not to the issue tracker.
 
 ## Licence
 
