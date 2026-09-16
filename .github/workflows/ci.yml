@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      # Listed explicitly rather than as a cross product: Python 3.8 is not
+      # available on the ubuntu-24.04 or arm64 macOS runner images, so the
+      # floor is pinned to images that still carry it. Linux sweeps every
+      # supported version; Windows and macOS cover the floor and the ceiling,
+      # which is where the os.name == 'nt' and sys.platform == 'darwin'
+      # branches actually differ.
+      matrix:
+        include:
+          - { os: ubuntu-22.04, python: '3.8' }
+          - { os: ubuntu-latest, python: '3.9' }
+          - { os: ubuntu-latest, python: '3.10' }
+          - { os: ubuntu-latest, python: '3.11' }
+          - { os: ubuntu-latest, python: '3.12' }
+          - { os: ubuntu-latest, python: '3.13' }
+          - { os: windows-latest, python: '3.8' }
+          - { os: windows-latest, python: '3.13' }
+          - { os: macos-13, python: '3.8' }
+          - { os: macos-latest, python: '3.13' }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Byte-compile the engine
+        run: python -m compileall -q engine run.py
+
+      - name: Smoke test the running application
+        run: python tests/smoke.py
+
+  interface:
+    name: Interface syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check JavaScript parses
+        run: |
+          node --check web/app.js
+          node --check web/strings.js
+
+      - name: Check every string file is valid JSON
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          bad = []
+          files = sorted(pathlib.Path("web/strings").rglob("*.json"))
+          for p in files:
+              try:
+                  json.loads(p.read_text(encoding="utf-8"))
+              except Exception as exc:
+                  bad.append("%s: %s" % (p, exc))
+          for line in bad:
+              print(line)
+          print("checked %d string files" % len(files))
+          sys.exit(1 if bad else 0)
+          PY
