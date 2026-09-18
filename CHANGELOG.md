@@ -12,6 +12,14 @@ records, not how the code changed.
 ## [Unreleased]
 
 ### Added
+- **APFS snapshots can be listed and opened read-only.** On an APFS volume
+  that has snapshots, a Snapshots list now shows each snapshot's name,
+  creation time and transaction identifier, and a snapshot can be opened as a
+  read-only view of the volume as it was at that point — files as they were,
+  including ones later deleted or overwritten. A snapshot whose file contents
+  were removed when the snapshot was made is reported as dataless and cannot
+  be opened
+  ([#51](https://github.com/switch-nz/strata/issues/51)).
 
 - **Split raw sets** (`.001`, `.002`, …, or numbered from `.000`) are opened
   as one disk. Previously opening the first piece read that piece alone, with
