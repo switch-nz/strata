@@ -485,3 +485,53 @@ def scan(source):
         })
     return {"scheme": scheme, "partitions": out,
             "findings": gpt_findings}
+
+
+def identities(source, layout=None):
+    """Volume identities for each detected filesystem in an image.
+
+    Returns [{"part": <partition offset>, "key": "<scheme>:<id>"}] for every
+    partition whose filesystem exposes a stable volume identifier.  Partitions
+    without one (FAT, HFS+, logical folders) are omitted.
+    """
+    # Imported here rather than at module level: ewf and fs.ntfs are heavier
+    # modules and volume.py is imported on nearly every code path.
+    from .ewf import OffsetReader
+    from .fs import ntfs
+
+    layout = layout or scan(source)
+    found = []
+    for p in layout["partitions"]:
+        if not p.get("detected"):
+            continue
+        if p.get("logical") and p.get("detected") == "Logical":
+            continue
+        try:
+            src = OffsetReader(source, p["offset"], p["size"], p["slot"])
+            info = ntfs.open_fs(src).info()
+        except Exception:
+            # Encrypted volumes, unsupported filesystems, damaged boot
+            # records: identity extraction must never fail an acquire.
+            continue
+        kind = info.get("type")
+        if kind == "NTFS":
+            value = info.get("serial")
+            key = "ntfs:" + value if value else None
+        elif kind == "exFAT":
+            value = info.get("serial")
+            key = "exfat:" + value if value else None
+        elif kind == "ext4":
+            value = info.get("uuid")
+            key = "ext4:" + value if value else None
+        elif kind == "APFS":
+            value = info.get("uuid")
+            key = "apfs:" + value if value else None
+        elif kind == "AD1":
+            value = info.get("volume_serial")
+            key = "ad1:" + value if value else None
+        else:
+            key = None
+        if not key:
+            continue
+        found.append({"part": p["offset"], "key": key})
+    return found

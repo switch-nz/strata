@@ -393,6 +393,16 @@ class Session:
         self.case.log("evidence.open", {"path": path, "evidence_id": ev_id,
                                         "alongside": len(self.items) - 1,
                                         "tool": version_mod.label()})
+        if self.case is not None:
+            try:
+                found = volume_mod.identities(img, item.volumes)
+                self.case.register_volumes(ev_id, found)
+                self.case.reassociate_tags(ev_id, found)
+            except Exception as exc:
+                # Identity extraction or remap errors must never turn an
+                # open into a failure; the audit chain records the miss.
+                self.case.log("tags.reassociation_failed",
+                              {"evidence_id": ev_id, "error": str(exc)})
         return self.state()
 
     def open_case(self, case_path, examiner=None):

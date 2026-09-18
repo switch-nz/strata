@@ -13,6 +13,15 @@ records, not how the code changed.
 
 ### Added
 
+- **Tags follow a volume when it is re-acquired into another image.** Tags
+  are keyed to the filesystem handle of the file they name, which is stable
+  only within one image, so the same volume imaged again arrived with its
+  tags left behind on the old exhibit. Each detected volume now records its
+  filesystem's own identifier — an NTFS or exFAT serial, an ext4 or APFS
+  UUID — and when a volume the case has seen before is acquired, its tags
+  move to the new exhibit. A volume whose identifier matches several the
+  case already holds is reported rather than guessed
+  ([#82](https://github.com/switch-nz/strata/issues/82)).
 - **Split raw sets** (`.001`, `.002`, …, or numbered from `.000`) are opened
   as one disk. Previously opening the first piece read that piece alone, with
   nothing to say the rest of the disk was missing. The set is joined whichever

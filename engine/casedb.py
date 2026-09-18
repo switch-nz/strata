@@ -90,6 +90,17 @@ CREATE TABLE IF NOT EXISTS tagged_items (
     contiguous INTEGER,
     UNIQUE (evidence_id, part, node, tag));
 
+-- Where a volume's tags came from. One row per detected filesystem per
+-- evidence item, so tags can follow a volume when it is re-acquired into
+-- another image (#82): the key is the filesystem's own identifier -- an NTFS
+-- or exFAT serial, an ext4 or APFS UUID, an AD1 source volume serial -- the
+-- same value the volume reports wherever it is re-imaged.
+CREATE TABLE IF NOT EXISTS volume_identity (
+    evidence_id INTEGER NOT NULL,
+    part INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    UNIQUE (evidence_id, part));
+
 CREATE TABLE IF NOT EXISTS audit (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     at TEXT NOT NULL,
@@ -946,6 +957,90 @@ class Case:
     def tag_counts(self):
         return {r["tag"]: r["n"] for r in self.db.execute(
             "SELECT tag, COUNT(*) n FROM tagged_items GROUP BY tag ORDER BY tag")}
+
+    @_writes
+    def register_volumes(self, evidence_id, identities):
+        """Record the volume identities of one evidence item, replacing any
+        earlier record for it (an image may be re-opened after re-imaging)."""
+        self.db.execute("DELETE FROM volume_identity WHERE evidence_id=?",
+                        (evidence_id,))
+        for ident in identities:
+            self.db.execute(
+                "INSERT INTO volume_identity (evidence_id, part, key) "
+                "VALUES (?,?,?)",
+                (evidence_id, ident["part"], ident["key"]))
+        self.db.commit()
+
+    @_writes
+    def reassociate_tags(self, evidence_id, identities):
+        """Move tags of previously seen volumes onto this acquisition.
+
+        For each identity key of the incoming evidence, if exactly one other
+        evidence item held that key, its tagged rows move here (same volume
+        means same filesystem layout, so node values travel as-is).  Zero or
+        several candidates is reported, never guessed.  Returns the counts
+        and logs audit action "tags.reassociated".
+        """
+        counts = {"remapped": 0, "duplicates_dropped": 0, "ambiguous": 0,
+                  "unchanged": 0}
+        ambiguous_details = []
+        for ident in identities:
+            part = ident["part"]
+            key = ident["key"]
+            moved_from = self.db.execute(
+                "SELECT DISTINCT evidence_id, part FROM volume_identity "
+                "WHERE key=? AND NOT (evidence_id=? AND part=?)",
+                (key, evidence_id, part)).fetchall()
+            if len(moved_from) == 1:
+                src_ev, src_part = moved_from[0]
+                rows = self.db.execute(
+                    "SELECT id, node, tag FROM tagged_items "
+                    "WHERE evidence_id=? AND part=?",
+                    (src_ev, src_part)).fetchall()
+                if not rows:
+                    # The volume's tags were already moved or never existed;
+                    # fold the identity silently and count nothing.
+                    self.db.execute(
+                        "DELETE FROM volume_identity "
+                        "WHERE evidence_id=? AND part=?",
+                        (src_ev, src_part))
+                    continue
+                for row in rows:
+                    clash = self.db.execute(
+                        "SELECT id FROM tagged_items "
+                        "WHERE evidence_id=? AND part=? AND node=? AND tag=?",
+                        (evidence_id, part, row["node"],
+                         row["tag"])).fetchone()
+                    if clash:
+                        # Both copies were tagged before identity tracking
+                        # existed; the target's row is what the examiner
+                        # currently sees, so it stands.
+                        self.db.execute("DELETE FROM tagged_items WHERE id=?",
+                                        (row["id"],))
+                        counts["duplicates_dropped"] += 1
+                    else:
+                        self.db.execute(
+                            "UPDATE tagged_items SET evidence_id=?, part=? "
+                            "WHERE id=?",
+                            (evidence_id, part, row["id"]))
+                        counts["remapped"] += 1
+                # The source's identity has been subsumed; leaving it would
+                # make a later third acquisition ambiguous between the empty
+                # source and the real target.
+                self.db.execute(
+                    "DELETE FROM volume_identity "
+                    "WHERE evidence_id=? AND part=?", (src_ev, src_part))
+            elif not moved_from:
+                counts["unchanged"] += 1
+            else:
+                counts["ambiguous"] += 1
+                ambiguous_details.append(
+                    {"key": key, "candidates": [list(r) for r in moved_from]})
+        self.db.commit()
+        detail = dict(evidence_id=evidence_id, **counts)
+        detail["ambiguous_details"] = ambiguous_details or None
+        self.log("tags.reassociated", detail)
+        return dict(counts, ambiguous_details=ambiguous_details)
 
     @_writes
     def save_search(self, evidence_id, name, query, hits, part=None):
