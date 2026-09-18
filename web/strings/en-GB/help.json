@@ -19,6 +19,8 @@
   "compressed_prefetch_decoded_using_operating_system_s": "Compressed prefetch was decoded using the operating system’s decompressor. A portable implementation is pending, so this artefact is currently Windows-only.",
   "dates_show_local_time_utc_click_change": "Dates show local time and UTC. Click to change.",
   "dates_show_utc_click_apply_local_offset": "Dates show UTC. Click to apply a local offset.",
+  "diff.truncated_budget": "The listing budget ran out on at least one side, so the diff covers the entries listed before the cut — treat it as partial.",
+  "diff.walks_both_trees": "Walks both sides' full directory trees and compares every path's presence, size and timestamps. Node numbers (MFT records) are not compared — they differ between acquisitions.",
   "deriving_key_entered_format_specifies_about_million": "Deriving the key from what you entered. The format specifies about a million rounds of hashing — that delay is deliberate, and it is what stops a short password being guessed quickly.",
   "every_partition_plus_unallocated_space_gaps_runs": "Every partition, plus unallocated space and gaps. Runs in the task tray — you can close this.",
   "exhibit_removed_case_evidence_file_itself_untouched": "{exhibit} was removed from the case. The evidence file itself is untouched.",

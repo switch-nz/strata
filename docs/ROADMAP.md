@@ -163,7 +163,7 @@ Agreeing with another tool is agreement, not verification.
 - [ ] Template editor, so an examiner can define a structure without Python.
       The templates in `engine/structure.py` are already declarative enough to
       make this mostly an interface problem.
-- [ ] Diff two images, or two snapshots of one volume.
+- [x] Diff two images, or two snapshots of one volume.
 - [ ] Scripting or plugin API for custom parsers.
 - [ ] Multi-examiner case notes with attribution.
 - [~] Localisation — the interface and engine messages already load from

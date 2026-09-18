@@ -13,6 +13,14 @@ records, not how the code changed.
 
 ### Added
 
+- **Two volumes can be diffed, per path.** A new Diff tab picks any two
+  loaded exhibits (or a volume and one of its own shadow-copy snapshots)
+  and lists what was added, removed and changed between them — compared
+  by path, with size and timestamps per side. Node numbers are ignored:
+  the same volume acquired twice does not report every file as changed
+  just because its MFT records moved. Snapshot reads come straight from
+  the shadow-copy store, layered over the live volume
+  ([#74](https://github.com/switch-nz/strata/issues/74)).
 - **Gallery thumbnails no longer load the full-size image for every
   picture.** A photo's own embedded EXIF thumbnail — what most camera
   and phone photos already carry, typically a few KB against a

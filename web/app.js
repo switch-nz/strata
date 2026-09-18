@@ -6063,6 +6063,149 @@ async function doArtifacts(force = false) {
                                  await api.get('recyclebin', { part })), part);
 }
 
+// ---- Diff (issue #74): two exhibits, or live volume vs one of its VSS
+// snapshots. Server walks both trees and compares per path.
+
+let diffPartsLoaded = false;
+
+function renderDiffPanel() {
+  const box = $('#diff-results');
+  if (!S.open) {
+    box.innerHTML = `<p class="empty">${txt('ui.open_image_see_volume_structure')}</p>`;
+    return;
+  }
+  if (diffPartsLoaded) return;
+  diffPartsLoaded = true;
+
+  const items = (S.exhibits && S.exhibits.length)
+    ? S.exhibits
+    : [{ evidence_id: S.evidenceId ?? null, label: S.image.segments[0] }];
+  const fill = (sel) => {
+    const el = $(sel);
+    el.innerHTML = '';
+    for (const ev of items) {
+      const parts = partsOf(ev);
+      for (const p of parts) {
+        if (p.allocated === false || (!p.detected && !logicalRegion(p))) continue;
+        const o = document.createElement('option');
+        o.value = JSON.stringify({ ev: ev.evidence_id ?? null, part: p.offset });
+        o.textContent = `${ev.label || ev.path} — ${partLabel(p, parts)}`;
+        el.appendChild(o);
+      }
+    }
+    el.addEventListener('change', () => loadDiffSnaps(sel));
+  };
+  fill('#diff-a');
+  fill('#diff-b');
+  if ($('#diff-b').options.length > 1) $('#diff-b').selectedIndex = 1;
+  loadDiffSnaps('#diff-a');
+  loadDiffSnaps('#diff-b');
+}
+
+async function loadDiffSnaps(sel) {
+  const spec = $(sel).value;
+  const snapSel = $(sel === '#diff-a' ? '#diff-a-snap' : '#diff-b-snap');
+  snapSel.innerHTML = `<option value="">${txt('ui.diff.current')}</option>`;
+  if (!spec) return;
+  let v;
+  try { v = JSON.parse(spec); } catch { return; }
+  const r = await api.get('vss', { part: v.part, ev: v.ev ?? undefined });
+  const snaps = (r && r.snapshots) || [];
+  snaps.forEach((s, i) => {
+    if (!s.block_list_offset) return;
+    const o = document.createElement('option');
+    o.value = String(i);
+    o.textContent = `#${i} · ${s.created_at || s.id}`;
+    snapSel.appendChild(o);
+  });
+}
+
+async function runDiff() {
+  const box = $('#diff-results');
+  const a = $('#diff-a').value, b = $('#diff-b').value;
+  if (!a || !b) return toast(txt('ui.diff.pick_two'));
+  const spec = sel => {
+    const v = JSON.parse($(sel).value);
+    const snap = $(sel === '#diff-a' ? '#diff-a-snap' : '#diff-b-snap').value;
+    return { ev: v.ev, part: v.part, snap: snap === '' ? null : +snap };
+  };
+  box.innerHTML = `<p class="empty">${txt('ui.diff.running')}</p>`;
+  const t = await api.post('diff', { a: spec('#diff-a'), b: spec('#diff-b') });
+  if (r_encrypted(t)) return;
+  if (t.building) {
+    await awaitTask(t.task, txt('ui.diff.running'));
+    return runDiff();
+  }
+  const r = await awaitTask(t, txt('ui.diff.running'), {
+    modal: { title: txt('ui.diff.running'),
+             detail: txt('help.diff.walks_both_trees') },
+  });
+  if (!r) return;
+  renderDiffResult(r);
+}
+
+function r_encrypted(r) {
+  if (r.encrypted) { toast(r.error || r.kind); return true; }
+  return false;
+}
+
+function renderDiffResult(r) {
+  const box = $('#diff-results');
+  const d = r.diff || {};
+  const cap = 500;
+  const side = x => x == null ? '' : `#${x}`;
+  const head = `<div class="results-head">${
+    txt('ui.diff.added', { n: (d.added || []).length }) } · ${
+    txt('ui.diff.removed', { n: (d.removed || []).length }) } · ${
+    txt('ui.diff.changed', { n: (d.changed || []).length }) } · ${
+    txt('ui.diff.unchanged', { n: d.unchanged_count || 0 })}</div>`;
+  if (!(d.added || []).length && !(d.removed || []).length
+      && !(d.changed || []).length) {
+    box.innerHTML = head + `<p class="empty">${txt('ui.diff.no_changes')}</p>`;
+    return;
+  }
+  const row = (cls, path, a, b) =>
+    `<tr class="${cls}"><td>${esc(path)}</td><td>${a}</td><td>${b}</td></tr>`;
+  const field = (f, name) => f == null ? '' : esc(String(f));
+  const size = f => f && f.size != null ? fmt.bytes(f.size) : '';
+  const mod = f => f && f.modified ? esc(String(f.modified)) : '';
+  const del = f => f && f.deleted ? '✓' : '';
+  const table = (title, rows, columns) => `
+    <div class="results-head">${esc(title)}</div>
+    <table class="diff-table"><thead><tr>${columns.map(c =>
+      `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${
+      rows.join('')}</tbody></table>`;
+  const added = (d.added || []).slice(0, cap).map(x =>
+    row('add', x.path, '', `${size(x.b)}${del(x.b)}`));
+  const removed = (d.removed || []).slice(0, cap).map(x =>
+    row('rm', x.path, `${size(x.a)}${del(x.a)}`, ''));
+  const changed = (d.changed || []).slice(0, cap).map(x =>
+    row('ch', x.path,
+        `${size(x.a)} · ${mod(x.a)}${del(x.a)}`,
+        `${size(x.b)} · ${mod(x.b)}${del(x.b)}`));
+  const listed = [d.added, d.removed, d.changed]
+    .reduce((n, l) => n + (l || []).length, 0);
+  const foot = [d.added, d.removed, d.changed]
+    .some(l => (l || []).length > cap)
+    ? `<p class="hint">${txt('ui.diff.showing_n_of_m', { n: cap, m: listed })}</p>`
+    : '';
+  const trunc = [r.a && r.a.truncated, r.b && r.b.truncated]
+    .some(Boolean)
+    ? `<p class="hint">${txt('help.diff.truncated_budget')}</p>`
+    : '';
+  box.innerHTML = head + trunc
+    + (added.length ? table(txt('ui.diff.added', { n: (d.added || []).length }),
+        added, ['Path', 'Size', '']) : '')
+    + (removed.length ? table(txt('ui.diff.removed', { n: (d.removed || []).length }),
+        removed, ['Path', 'Size', '']) : '')
+    + (changed.length ? table(txt('ui.diff.changed', { n: (d.changed || []).length }),
+        changed, ['Path', 'A', 'B']) : '')
+    + foot
+    + (!added.length && !removed.length && !changed.length
+        ? `<p class="empty">${txt('ui.diff.no_changes')}</p>` : '');
+}
+
+
 function jumpRows(lists) {
   const rows = [];
   lists.forEach((l, li) => {
@@ -6695,7 +6838,7 @@ function tabCount(view, n) {
   const tab = $(`.tab[data-view="${view}"]`);
   const base = { carve: 'Carved', find: 'Search', marks: 'Marks',
                  time: 'Timeline', tags: 'Tagged', hash: 'Hashes',
-                 triage: 'Triage', attack: 'ATT&CK' }[view];
+                 triage: 'Triage', attack: 'ATT&CK', diff: 'Diff' }[view];
   if (!base) return;
   tab.innerHTML = n == null ? base : `${base} <span class="count">${n}</span>`;
 }
@@ -9273,6 +9416,7 @@ $('#find-scope').addEventListener('change', refreshIndexState);
 $('#btn-save-search').addEventListener('click', saveCurrentSearch);
 $('#btn-hash').addEventListener('click', doHash);
 $('#btn-duplicates').addEventListener('click', doDuplicates);
+$('#btn-diff').addEventListener('click', runDiff);
 $('#btn-artifacts').addEventListener('click', () => doArtifacts(true));
 $('#art-scope')?.addEventListener('change', () => { artPick = null; renderArtTree(); });
 
@@ -9523,6 +9667,7 @@ function setModule(view) {
   if (view === 'sources') core.draw();
   if (view === 'cases') renderCases();
   if (view === 'time') loadStoredTimeline();
+  if (view === 'diff') renderDiffPanel();
   hex.resize();
 }
 

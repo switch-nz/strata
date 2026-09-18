@@ -43,6 +43,7 @@
   <button class="tab" data-view="tags" role="tab" data-i18n="ui.marks.tagged"></button>
   <button class="tab" data-view="hash" role="tab" data-i18n="ui.tags.hashes"></button>
   <button class="tab" data-view="attack" data-no-viewer role="tab" data-i18n="ui.hash.attack"></button>
+  <button class="tab" data-view="diff" data-no-viewer role="tab" data-i18n="ui.app.diff"></button>
 </nav>
 
 <main class="workspace" id="workspace">
@@ -311,6 +312,27 @@
         <div id="attack-results" class="results"></div>
       </div>
     </div>
+
+    <div class="view" data-view="diff">
+      <div class="controls">
+        <label class="row"><span data-i18n="ui.diff.side_a"></span>
+          <select id="diff-a"></select>
+          <span data-i18n="ui.diff.snapshot"></span>
+          <select id="diff-a-snap"></select>
+        </label>
+        <label class="row"><span data-i18n="ui.diff.side_b"></span>
+          <select id="diff-b"></select>
+          <span data-i18n="ui.diff.snapshot"></span>
+          <select id="diff-b-snap"></select>
+        </label>
+        <button class="solid" id="btn-diff" data-i18n="ui.diff.run"></button>
+        <p class="hint" data-i18n="help.diff.walks_both_trees"></p>
+      </div>
+      <div class="view-main">
+        <div id="diff-results" class="results"></div>
+      </div>
+    </div>
+
 
     <div class="view" data-view="hash">
       <div class="controls">

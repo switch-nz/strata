@@ -841,6 +841,20 @@ dialog.busy .hint { margin: 0 0 16px; }
   white-space: nowrap;
 }
 .reg-vals.is-del .nm, .reg-vals tr.is-del .nm { color: var(--alarm); }
+.diff-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.diff-table th {
+  position: sticky; top: 0; background: var(--panel);
+  text-align: left; font-weight: 400; font-size: 9px;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--dimmer);
+  padding: 5px 10px; border-bottom: 1px solid var(--line-soft);
+}
+.diff-table td { padding: 3px 10px; vertical-align: top;
+                 word-break: break-word; }
+.diff-table tr:hover { background: var(--raise); }
+.diff-table tr.add td:first-child { color: var(--good); }
+.diff-table tr.rm td:first-child { color: var(--alarm); }
+.diff-table tr.ch td { color: var(--amber); }
+.diff-table tr.ch td:first-child { color: var(--text); }
 
 .pv-dir { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 
