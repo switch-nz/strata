@@ -517,7 +517,7 @@ def _excluded(pos, merged):
             return True
     return False
 
-def _next_excluded(pos, merged):
+def _next_excluded_index(pos, merged):
     lo, hi = 0, len(merged)
     while lo < hi:
         mid = (lo + hi) // 2
@@ -525,7 +525,49 @@ def _next_excluded(pos, merged):
             lo = mid + 1
         else:
             hi = mid
-    return merged[lo][0] if lo < len(merged) else None
+    return lo if lo < len(merged) else None
+
+def _next_excluded(pos, merged):
+    i = _next_excluded_index(pos, merged)
+    return merged[i][0] if i is not None else None
+
+def _single_gap_within(lo, hi, merged):
+    """The one excluded (allocated) extent strictly inside (lo, hi), or
+    None if there isn't exactly one. A second fragmented file recovered
+    from unallocated space is often separated from its header by exactly
+    one still-allocated extent -- other data that landed in the space
+    between the two once-contiguous fragments. More than one such extent
+    means more than two fragments, which this carving pass does not
+    attempt."""
+    if not merged:
+        return None
+    i = _next_excluded_index(lo, merged)
+    if i is None:
+        return None
+    gap = merged[i]
+    if gap[0] <= lo or gap[1] >= hi:
+        return None
+    if i + 1 < len(merged) and merged[i + 1][0] < hi:
+        return None
+    return gap
+
+def _bifragment(sig, abs_pos, length, merged):
+    """Splits a footer-confirmed hit around a single allocated extent that
+    falls between its header and footer, so the reconstructed file can skip
+    that extent's bytes instead of splicing unrelated data into the middle
+    of it. Returns [[frag1_offset, frag1_length], [frag2_offset,
+    frag2_length]], or None if there is no such gap, or the resulting pieces
+    are too small to plausibly hold the header or footer they must carry."""
+    gap = _single_gap_within(abs_pos, abs_pos + length, merged)
+    if gap is None:
+        return None
+    frag1_len = gap[0] - abs_pos
+    frag2_off = gap[1]
+    frag2_len = (abs_pos + length) - gap[1]
+    if frag1_len < sig.header_offset + len(sig.head) or \
+            frag2_len < len(sig.foot):
+        return None
+    return [[abs_pos, frag1_len], [frag2_off, frag2_len]]
 
 def _first_empty_sector(buf, size):
     zero = bytes(size)
@@ -576,7 +618,11 @@ def carve(source, start=0, end=None, extensions=None, exclude=None,
                     source, sig, abs_pos, end, merged=merged, sector=sector)
                 if not length:
                     continue
-                head = source.read_at(abs_pos, min(512, length))
+                fragments = None
+                if method == "footer" and merged:
+                    fragments = _bifragment(sig, abs_pos, length, merged)
+                head_len = fragments[0][1] if fragments else length
+                head = source.read_at(abs_pos, min(512, head_len))
                 hit = {
                     "offset": abs_pos, "length": length, "ext": sig.ext,
                     "type": sig.name,
@@ -586,6 +632,11 @@ def carve(source, start=0, end=None, extensions=None, exclude=None,
                     "entropy": round(entropy_mod.of(head), 3) if verify_entropy else None,
                     "id": "carve:%d:%s" % (abs_pos, sig.ext),
                 }
+                if fragments:
+                    gap_off = fragments[0][0] + fragments[0][1]
+                    hit["fragments"] = fragments
+                    hit["gap"] = {"offset": gap_off,
+                                 "length": fragments[1][0] - gap_off}
                 if sig.custom:
                     hit["custom"] = True
                     hit["id"] = "carve:%d:%s:custom" % (abs_pos, sig.ext)

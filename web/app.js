@@ -4345,24 +4345,27 @@ async function pickPath({ mode = 'open', title = '', dir = '', file = '',
   return r.path || '';
 }
 
-function rangeMenu({ offset, length, part = null, label = 'range', ext = '' }) {
+function rangeMenu({ offset, length, part = null, label = 'range', ext = '',
+                     fragments = null }) {
   const len = Math.max(1, length || 1);
   return [
     { label: txt('ui.show_bytes'), action: () => jumpTo(part, offset, len) },
     { sep: true },
     { label: 'Mark…',
       action: () => saveMark(offset + (part || 0), len, label, 'result') },
-    { label: txt('ui.export_bytes'), action: () => exportRange({ offset, length: len, part, ext }) },
+    { label: txt('ui.export_bytes'),
+      action: () => exportRange({ offset, length: len, part, ext, fragments }) },
     { label: txt('ui.export_bytes_2'),
-      action: () => exportRangeAs({ offset, length: len, part, ext, label }) },
+      action: () => exportRangeAs({ offset, length: len, part, ext, label, fragments }) },
     { sep: true },
     { label: txt('ui.copy_offset'), action: () => copyText('0x' + fmt.hex(offset, 8)) },
   ];
 }
 
-async function exportRange({ offset, length, part = null, ext = '', dest = null }) {
+async function exportRange({ offset, length, part = null, ext = '', dest = null,
+                             fragments = null }) {
   const r = await api.post('export', { part: part ?? undefined, offset, length,
-                                       ext: ext || undefined, dest });
+                                       ext: ext || undefined, dest, fragments });
   if (r.error) return toast(r.error);
   toast(txt('messages.toast.exported_with_digest', { size: fmt.bytes(r.bytes), digest: (r.sha256 || '').slice(0, 16) }), 'action');
 }
@@ -4995,6 +4998,7 @@ function renderCarve(part) {
         <span class="kind">${esc(h.ext.toUpperCase())}</span>
         <span>${fmt.bytes(h.length)}</span>
         ${h.bounded ? '' : `<span class="flag warn">${txt('ui.carve.estimated')}</span>`}
+        ${h.fragments ? `<span class="flag warn">${txt('ui.carve.fragmented')}</span>` : ''}
         ${h.custom ? `<span class="flag">${txt('ui.carve.custom_flag')}</span>` : ''}
         <span class="off">0x${fmt.hex(h.offset, 8)}</span>
       </div>
@@ -5010,6 +5014,7 @@ function renderCarve(part) {
     const h = S.carveHits[+el.dataset.i];
     return h && rangeMenu({ offset: h.offset, length: h.length,
                             part: carvePart(el), ext: h.ext,
+                            fragments: h.fragments,
                             label: `Carved ${(h.ext || '').toUpperCase()}` });
   });
   core.draw();
@@ -5025,15 +5030,18 @@ function showCarveHit(h, part) {
       [txt('ui.kv.extension'), h.ext],
       [txt('ui.kv.length_from'), carveMethod(h.method)],
       h.entropy != null && [txt('ui.kv.entropy'), h.entropy + ' bits/byte'],
+      h.gap && [txt('ui.kv.gap'), fmt.bytes(h.gap.length)],
     ])}
     ${h.bounded ? '' : `<div class="notice">${txt('help.carve.estimated_notice')}</div>`}
+    ${h.gap ? `<div class="notice">${txt('help.carve.fragmented_notice',
+      { bytes: fmt.bytes(h.gap.length) })}</div>` : ''}
     <div class="actions">
       <button class="ghost" id="btn-carve-export">${txt('ui.show_entry.export')}</button>
       <button class="ghost" id="btn-carve-mark">${txt('ui.show_carve_hit.mark')}</button>
     </div>`;
   $('#btn-carve-export').addEventListener('click', async () => {
     const r = await api.post('export', { part, offset: h.offset,
-      length: h.length, ext: h.ext });
+      length: h.length, ext: h.ext, fragments: h.fragments });
     toast(txt('messages.toast.exported_with_digest', { size: fmt.bytes(r.bytes), digest: r.sha256.slice(0, 16) }), 'action');
   });
   $('#btn-carve-mark').addEventListener('click', () =>

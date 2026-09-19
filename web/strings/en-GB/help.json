@@ -5,6 +5,7 @@
   "browser_would_write_clipboard_own_usually_needs": "The browser would not write to the clipboard on its own — that usually needs a real key press or click behind it. The value is below and already selected: press Ctrl+C, or ⌘C.",
   "bytes_after_end_file_inside_final_cluster": "Bytes after end-of-file inside the final cluster. Often holds fragments of whatever occupied the cluster before.",
   "carve.estimated_notice": "This file does not say how long it is and nothing exact ended it, so its end is an estimate. Treat the tail as unverified.",
+  "carve.fragmented_notice": "This file's header and footer are separated by {bytes} of unrelated data -- almost certainly another file that landed in the gap between two once-contiguous fragments. Exporting or marking skips that gap; viewing it in the hex view shows it as recorded, gap included.",
   "carve.pattern_syntax": "Hex bytes such as FF D8, ?? for any one byte, and ASCII text in double quotes such as \"PK\".",
   "carve.signature_intro": "A file type of your own, found by the bytes it starts with. Kept with your preferences on this computer, not in the case; every carve writes the signatures it used into the case's audit log.",
   "case.case_file_records_evidence_bookmarks_audit": "A case file records its evidence, bookmarks and audit\n      trail. Opening one reopens the image it was built against.",

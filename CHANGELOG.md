@@ -11,6 +11,23 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+### Added
+
+- **Carving now recovers a fragmented file split by exactly one gap of
+  other data, for footer-terminated types.** A signature carver reads
+  forward in a straight line, so a deleted file whose two fragments were
+  separated by other data that later filled the space between them
+  either carved with that unrelated data spliced into the middle, or
+  missed the file entirely. When a header and its footer (PNG, JPEG,
+  GIF, PDF, ZIP) are separated by exactly one still-allocated extent,
+  the hit is now split into two fragments around it; exporting or
+  marking it reads and concatenates the real fragments, skipping the
+  gap, with a "fragmented" flag and a note on how many bytes were
+  excluded. Two or more gaps, or a gap too close to the header or
+  footer to leave room for it, are left as before, unsplit
+  ([#66](https://github.com/switch-nz/strata/issues/66), two-fragment
+  gap carving of footer-terminated types only).
+
 ## [0.2.0] - 2026-09-19
 
 A feature and correctness release: fuzzy hashing and a Find Similar report,

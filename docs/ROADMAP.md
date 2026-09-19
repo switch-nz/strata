@@ -150,7 +150,12 @@ Agreeing with another tool is agreement, not verification.
 - [ ] Image similarity (perceptual hashing) -- needs pixel-level image
       decoding this codebase does not otherwise have a reason to carry, so
       it is scoped separately from fuzzy hashing (done).
-- [ ] Carving across fragments, starting with bi-fragment gap carving.
+- [ ] Carving across fragments beyond the first slice: a gap that is not a
+      currently-allocated extent (both fragments sit in unallocated space,
+      with unrelated deleted data between them), sizer-only (no-footer)
+      signatures, and three or more fragments. The first slice --
+      footer-terminated types split around exactly one allocated gap -- is
+      done.
 - [ ] A map view for GPS coordinates.
 
 ---

@@ -3570,6 +3570,12 @@ class Handler(BaseHTTPRequestHandler):
             part = body.get("part", 0)
             off = int(body["offset"]) + int(part or 0)
             length = int(body["length"])
+            fragments = body.get("fragments")
+            if fragments is not None and not (
+                    isinstance(fragments, list) and fragments and all(
+                        isinstance(fr, (list, tuple)) and len(fr) == 2
+                        for fr in fragments)):
+                return self._send(400, {"error": "Invalid fragments."})
             chosen = body.get("dest")
             if chosen:
                 dest = os.path.abspath(os.path.expanduser(chosen))
@@ -3582,16 +3588,28 @@ class Handler(BaseHTTPRequestHandler):
                 dest = os.path.join(out_dir, name)
             os.makedirs(out_dir or ".", exist_ok=True)
             src = s.region(part) if part else s.image
-            written = 0
-            with open(dest, "wb") as f:
-                pos = int(body["offset"]) if part else off
-                while written < length:
-                    chunk = src.read_at(pos, min(1 << 20, length - written))
+
+            def read_range(rel_offset, rel_length, f):
+                pos = int(rel_offset)
+                remaining = int(rel_length)
+                n = 0
+                while remaining > 0:
+                    chunk = src.read_at(pos, min(1 << 20, remaining))
                     if not chunk:
                         break
                     f.write(chunk)
-                    written += len(chunk)
+                    n += len(chunk)
                     pos += len(chunk)
+                    remaining -= len(chunk)
+                return n
+
+            written = 0
+            with open(dest, "wb") as f:
+                if fragments:
+                    for frag_off, frag_len in fragments:
+                        written += read_range(frag_off, frag_len, f)
+                else:
+                    written = read_range(body["offset"], length, f)
             h = hashlib.sha256()
             with open(dest, "rb") as f:
                 for blk in iter(lambda: f.read(1 << 20), b""):
