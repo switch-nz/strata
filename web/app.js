@@ -6006,10 +6006,26 @@ function cacheArtefact(mode, part, r) {
   return r;
 }
 
+function confirmRerunArtefact(label) {
+  return new Promise(resolve => {
+    const dlg = $('#dlg-rerun-artefact');
+    $('#rerun-artefact-text').textContent =
+      txt('help.rerun_artefact.replaces_named', { name: label });
+    dlg.returnValue = '';
+    dlg.addEventListener('close', () => resolve(dlg.returnValue === 'ok'),
+                         { once: true });
+    dlg.showModal();
+  });
+}
+
 async function doArtifacts(force = false) {
   const partVal = $('#art-scope').value;
   if (partVal === '') return toast(txt('messages.toast.pick_filesystem'));
   const part = +partVal;
+  if (force && artCache.has(artKey(artMode, part))) {
+    const ok = await confirmRerunArtefact(ART_LABEL[artMode] || artMode);
+    if (!ok) return;
+  }
   const box = $('#art-results');
   $('#triage-results').hidden = true;
   $('#art-results').hidden = false;

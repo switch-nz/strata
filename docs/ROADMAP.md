@@ -165,8 +165,6 @@ Agreeing with another tool is agreement, not verification.
 - [ ] Configurable columns in the folder view, and the filter controls search
       already has (both can share `filesearch.matches_filters`).
 - [ ] Read-only mode that refuses export and report writing.
-- [ ] Ask before re-running an artefact replaces its earlier result — fine on a
-      first pass, wrong once someone has worked from the earlier output.
 - [ ] Template editor, so an examiner can define a structure without Python.
       The templates in `engine/structure.py` are already declarative enough to
       make this mostly an interface problem.

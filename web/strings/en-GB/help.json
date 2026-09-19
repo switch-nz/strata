@@ -87,6 +87,8 @@
   "remove.cannot_undone_audit_log_keeps_record": "This cannot be undone. The audit log keeps a record of the\n      removal and of what was deleted with it.",
   "remove.evidence_file_disk_never_touched_what": "The evidence file on disk is never touched. What is\n      deleted is this exhibit's place in the case and the work recorded\n      against it.",
   "report_written_path_r_open_browser_print": "Report written to {path} ({r}). Open it in a browser and print to PDF if you need one.",
+  "rerun_artefact.replaces_earlier_result": "The earlier result is gone once replaced, not kept alongside the new one.",
+  "rerun_artefact.replaces_named": "You already have {name} results for this evidence item. Running it again replaces them.",
   "restored_case_phrase_text_never_stored_offsets": "Restored from the case. Phrase text is never stored, so the offsets below are recorded but the words are not — re-run against the image to recover them.",
   "resyncs_point_s_journal_could_followed_skipped": "{resyncs} point(s) in the journal could not be followed and were skipped ({resync_bytes} bytes). The records either side are sound; the gap is reported rather than closed over.",
   "seed_phrase_results_run_cannot_relied_upon": "). Seed phrase results from this run cannot be relied upon.",

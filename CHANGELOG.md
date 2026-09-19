@@ -13,6 +13,13 @@ records, not how the code changed.
 
 ### Added
 
+- **Re-running an artefact collector now asks first if it already has a
+  result for that evidence item.** `save_artefact` replaces the earlier
+  row silently, which is fine on a first pass and wrong once an examiner
+  has worked from the earlier output. Running one again from the Run
+  Artefacts picker now confirms first when a result already exists,
+  and does nothing if declined
+  ([#71](https://github.com/switch-nz/strata/issues/71)).
 - **Carving now recovers a fragmented file split by exactly one gap of
   other data, for footer-terminated types.** A signature carver reads
   forward in a straight line, so a deleted file whose two fragments were
