@@ -11,6 +11,13 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-19
+
+A feature and correctness release: fuzzy hashing and a Find Similar report,
+LUKS2 Argon2 unlock, split raw sets, and PST attachment content, alongside a
+large batch of parser correctness fixes across ext4, exFAT, FAT, EWF, AD1,
+VMDK and the registry that closes out #19 in full. Upgrade from 0.1.2.
+
 ### Added
 
 - **A fuzzy hash is now computed alongside MD5, SHA-1 and SHA-256, and a
@@ -103,6 +110,15 @@ records, not how the code changed.
   file's already-read content for the rest of the session, the same way
   the hex view already does
   ([#78](https://github.com/switch-nz/strata/issues/78)).
+- **Times recorded with no time zone are no longer shown as UTC.** FAT
+  timestamps, the DOS times inside shellbags, and exFAT timestamps whose
+  entry records no valid UTC offset are local time on a clock whose zone the
+  media does not say. They were marked and displayed as UTC, and converted to
+  the chosen display zone as if they were. They are now shown exactly as
+  recorded, with no zone, no conversion and no label, in the interface and
+  the report. Deciding which zone they belong to is left to the examiner.
+  The timeline still has to place them somewhere to sort them, and orders
+  them as if they were UTC ([#19](https://github.com/switch-nz/strata/issues/19)).
 
 ### Fixed
 - **A ShimCache entry proves a file was examined, not that it ran — but
@@ -240,17 +256,11 @@ records, not how the code changed.
   rather than silently read as if it were complete
   ([#19](https://github.com/switch-nz/strata/issues/19)).
 
-### Changed
+### Known issues
 
-- **Times recorded with no time zone are no longer shown as UTC.** FAT
-  timestamps, the DOS times inside shellbags, and exFAT timestamps whose
-  entry records no valid UTC offset are local time on a clock whose zone the
-  media does not say. They were marked and displayed as UTC, and converted to
-  the chosen display zone as if they were. They are now shown exactly as
-  recorded, with no zone, no conversion and no label, in the interface and
-  the report. Deciding which zone they belong to is left to the examiner.
-  The timeline still has to place them somewhere to sort them, and orders
-  them as if they were UTC ([#19](https://github.com/switch-nz/strata/issues/19)).
+The known issues listed for 0.1.2 are resolved:
+[#19](https://github.com/switch-nz/strata/issues/19) is closed, including
+the two registry crashes on truncated hives it was tracking.
 
 ## [0.1.2] - 2026-09-17
 
@@ -417,7 +427,8 @@ Corroborate results in these areas with another tool before relying on them.
   ([#15](https://github.com/switch-nz/strata/issues/15),
   [#19](https://github.com/switch-nz/strata/issues/19)).
 
-[Unreleased]: https://github.com/switch-nz/strata/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/switch-nz/strata/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/switch-nz/strata/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/switch-nz/strata/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/switch-nz/strata/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/switch-nz/strata/releases/tag/v0.1.0
