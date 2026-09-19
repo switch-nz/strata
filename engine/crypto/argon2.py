@@ -18,6 +18,8 @@ import hashlib
 import struct
 from array import array
 
+from .. import native
+
 VERSION = 0x13
 LEGACY_VERSION = 0x10
 KIND_CODE = {"argon2d": 0, "argon2i": 1, "argon2id": 2}
@@ -194,6 +196,27 @@ def _fill_segment(mem, pass_no, lane, slice_no, lanes, q, seg, m_prime,
         prev += 1
 
 
+def _derive_native(password, salt, t, m_kib, p, out_len, kind, version,
+                   secret, associated):
+    """Run Argon2 in the native sidecar; None when it must not be used."""
+    if not native.available():
+        return None
+    # The sidecar handles both versions (0x13, 0x10) and all three kinds
+    # with secret/associated data.  Guard only against lengths the C ABI
+    # cannot express; on any native error fall back to pure Python, which
+    # is the oracle.
+    if max(len(password), len(salt), len(secret),
+           len(associated)) >= (1 << 31):
+        return None
+    try:
+        return native.argon2_derive(
+            password, salt, t=t, m_kib=m_kib, p=p, out_len=out_len,
+            kind=KIND_CODE[kind], version=version, secret=secret,
+            associated=associated)
+    except native.NativeError:
+        return None
+
+
 def derive(password, salt, *, t, m_kib, p, out_len, kind="argon2id",
            version=VERSION, secret=b"", associated=b"", progress=None):
     """Derive out_len bytes with Argon2 (RFC 9106, version 0x13).
@@ -215,6 +238,8 @@ def derive(password, salt, *, t, m_kib, p, out_len, kind="argon2id",
     if m_kib < 8 * p:
         raise ValueError("memory %d KiB too small for %d lanes"
                          % (m_kib, p))
+    if m_kib > 0xFFFFFFFF:
+        raise OutOfMemory("cannot allocate %d KiB for Argon2" % (m_kib,))
     if out_len < 4:
         raise ValueError("tag length %d too short" % (out_len,))
     if len(salt) < 8:
@@ -228,6 +253,12 @@ def derive(password, salt, *, t, m_kib, p, out_len, kind="argon2id",
     m_prime = 4 * p * (m_kib // (4 * p))
     q = m_prime // p
     seg = q // SYNC_ROUNDS
+
+    if progress is None:
+        got = _derive_native(password, salt, t, m_kib, p, out_len, kind,
+                             version, secret, associated)
+        if got is not None:
+            return got
 
     h0 = _h(
         struct.pack("<7I", p, out_len, m_kib, t, version, y, len(password))

@@ -54,7 +54,8 @@ def _decrypt_region(cipher_name, mode, key, data, start_sector=0,
         k1, k2 = aes.AES(key[:half]), aes.AES(key[half:])
         for i in range(0, len(data), sector_size):
             out += aes.xts_decrypt(k1, k2, start_sector + i // sector_size,
-                                   data[i:i + sector_size])
+                                   data[i:i + sector_size],
+                                   sector_size=sector_size)
         return bytes(out)
     if mode.startswith("cbc-"):
         c = aes.AES(key)

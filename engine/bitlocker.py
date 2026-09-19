@@ -396,7 +396,8 @@ class BitLocker:
     def decrypt_sector(self, offset, data):
         k1, k2 = self._cached_keys()
         if self.mode == "xts":
-            return aes.xts_decrypt(k1, k2, offset // self.sector_size, data)
+            return aes.xts_decrypt(k1, k2, offset // self.sector_size, data,
+                                   sector_size=self.sector_size)
         iv = k1.encrypt_block(struct.pack("<Q", offset) + b"\x00" * 8)
         plain = aes.cbc_decrypt(k1, iv, data)
         if self.mode == "cbc-diffuser":

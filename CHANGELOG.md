@@ -51,6 +51,16 @@ records, not how the code changed.
   exhibit and path that shares one — only among files a hash run has
   already covered, since nothing here hashes a file just to compare it
   ([#67](https://github.com/switch-nz/strata/issues/67)).
+- **Encrypted-volume unlock and reading are dramatically faster when the
+  bundled native crypto module is present for this platform.** Unlocking a
+  LUKS2 volume and reading decrypted sectors from LUKS2/BitLocker images
+  now run at native speed instead of Python speed (an unlock that took
+  over a minute with heavy key-derivation settings completes in seconds;
+  decrypted reads go from under 1 MB/s to hundreds of MB/s). Results are
+  byte-identical to the previous output — the built-in implementation is
+  kept and automatically used wherever the native module is not shipped
+  for the platform, so behavior is unchanged otherwise.
+
 - **A PST attachment's content can now be viewed, not only its name and
   size.** The mail viewer listed every attachment's filename and size but
   had no way to read what was inside one. Clicking an attachment now
