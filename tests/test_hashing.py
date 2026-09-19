@@ -1,6 +1,15 @@
 import unittest
 
-from engine import hashing
+from engine import fuzzyhash, hashing
+
+
+class FakeFs:
+    def __init__(self, data):
+        self._data = data
+
+    def read_file(self, entry, max_bytes=None):
+        data = self._data
+        return data[:max_bytes] if max_bytes is not None else data
 
 
 class FakeCase:
@@ -92,6 +101,20 @@ class AnnotateHits(unittest.TestCase):
         hashing.annotate_hits(hits, matched)
         self.assertEqual([h["match_kind"] for h in hits],
                          ["notable", "known_good", "known_bad"])
+
+
+class HashEntry(unittest.TestCase):
+
+    def test_fuzzy_hash_matches_the_dedicated_module(self):
+        data = b"some file content" * 50
+        fs = FakeFs(data)
+        row = hashing.hash_entry(fs, {"mft": 5, "size": len(data)})
+        self.assertEqual(row["fuzzy"], fuzzyhash.hash_bytes(data))
+
+    def test_an_empty_file_gets_no_fuzzy_hash(self):
+        fs = FakeFs(b"")
+        row = hashing.hash_entry(fs, {"mft": 5, "size": 0})
+        self.assertIsNone(row["fuzzy"])
 
 
 if __name__ == "__main__":

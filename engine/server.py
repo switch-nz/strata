@@ -1483,6 +1483,17 @@ class Handler(BaseHTTPRequestHandler):
                     it["exhibit"] = held.label if held else None
             return self._send(200, {"groups": groups})
 
+        if path == "/api/hashes/similar":
+            if not s.case:
+                return self._send(200, {"pairs": []})
+            pairs = s.case.similar_files(
+                threshold=self._q("threshold", 60, int))
+            for p in pairs:
+                for side in ("a", "b"):
+                    held = s.items.get(p[side].get("evidence_id"))
+                    p[side]["exhibit"] = held.label if held else None
+            return self._send(200, {"pairs": pairs})
+
         if path == "/api/recyclebin":
             part = self._q("part", 0, int)
             fs = s.fs(part)
@@ -3347,7 +3358,8 @@ class Handler(BaseHTTPRequestHandler):
                         "truncated": len(rows) > 2000}
 
             t = s.start_task("hash", run, label="Hashing files",
-                              detail="MD5, SHA-1 and SHA-256 in one pass per file.")
+                              detail="MD5, SHA-1, SHA-256 and a fuzzy hash "
+                                      "in one pass per file.")
             s.case.log("hash.run", {"part": part, "scope": scope})
             return self._send(200, t)
 

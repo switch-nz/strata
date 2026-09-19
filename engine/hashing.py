@@ -5,6 +5,7 @@ import os
 import re
 
 from . import filesearch
+from . import fuzzyhash
 
 _HEX = re.compile(r"\b([0-9a-fA-F]{32}|[0-9a-fA-F]{40}|[0-9a-fA-F]{64})\b")
 
@@ -36,6 +37,7 @@ def hash_entry(fs, entry, max_bytes=None):
         "size": size, "read": len(data), "deleted": bool(entry.get("deleted")),
         "md5": md5.hexdigest(), "sha1": sha1.hexdigest(),
         "sha256": sha256.hexdigest(),
+        "fuzzy": fuzzyhash.hash_bytes(data) if data else None,
         "partial": bool(size and len(data) < size),
     }
 

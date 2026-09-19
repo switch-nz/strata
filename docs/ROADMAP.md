@@ -147,7 +147,9 @@ Agreeing with another tool is agreement, not verification.
 
 ## Analysis
 
-- [ ] Fuzzy hashing (ssdeep-style) and image similarity.
+- [ ] Image similarity (perceptual hashing) -- needs pixel-level image
+      decoding this codebase does not otherwise have a reason to carry, so
+      it is scoped separately from fuzzy hashing (done).
 - [ ] Carving across fragments, starting with bi-fragment gap carving.
 - [ ] A map view for GPS coordinates.
 

@@ -13,6 +13,17 @@ records, not how the code changed.
 
 ### Added
 
+- **A fuzzy hash is now computed alongside MD5, SHA-1 and SHA-256, and a
+  "Find similar" report groups files that are alike rather than
+  identical.** Only exact-digest matches could ever be found before, so an
+  edited or partially-overwritten copy of a file shared nothing with the
+  original. Every hash run now also produces a ssdeep-compatible
+  context-triggered piecewise hash; "Find similar" on the Hashes tab scores
+  every pair of already-hashed files across evidence items and reports
+  those above a similarity threshold, alongside the existing exact-digest
+  "Find duplicates" ([#65](https://github.com/switch-nz/strata/issues/65),
+  fuzzy hashing only; image similarity remains open — it needs pixel-level
+  image decoding this codebase does not otherwise have a reason to carry).
 - **Gallery thumbnails no longer load the full-size image for every
   picture.** A photo's own embedded EXIF thumbnail — what most camera
   and phone photos already carry, typically a few KB against a
