@@ -13,6 +13,17 @@ records, not how the code changed.
 
 ### Added
 
+- **A ShimCache entry (or any artefact row) can now be attributed to an
+  ATT&CK technique, and that attribution shows in the report.** ATT&CK
+  attribution existed only for tagged files; an artefact row like a
+  ShimCache entry has no filesystem handle to tag, so there was no way
+  to attribute one at all, and the report's ATT&CK section stayed
+  empty for it. Right-clicking a ShimCache entry now offers "Attribute
+  ATT&CK technique…", using the same picker and suggested-techniques
+  catalogue tagging a file already has; the attribution appears in the
+  ATT&CK tab and the report exactly as a file's would
+  ([#63](https://github.com/switch-nz/strata/issues/63), the report
+  half — the on-screen "examined, not run" caveat shipped earlier).
 - **Re-running an artefact collector now asks first if it already has a
   result for that evidence item.** `save_artefact` replaces the earlier
   row silently, which is fine on a first pass and wrong once an examiner

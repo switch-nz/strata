@@ -133,6 +133,7 @@
   "toast.open_evidence_first": "Open evidence first.",
   "toast.partition_evidence": "That partition is not in this evidence.",
   "toast.partition_open_exhibit": "That partition is not in the open exhibit.",
+  "toast.pick_a_technique": "Pick a technique first.",
   "toast.pick_filesystem": "Pick a filesystem.",
   "toast.point_stix_bundle_mitre": "Point at a STIX bundle from MITRE.",
   "toast.saved_name": "Saved \"{name}\".",

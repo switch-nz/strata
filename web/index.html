@@ -621,6 +621,22 @@
   </form>
 </dialog>
 
+<dialog id="dlg-attack-artefact">
+  <form method="dialog" class="dlg">
+    <h2 data-i18n="ui.attack_artefact.title"></h2>
+    <p class="hint" id="attack-artefact-item"></p>
+    <label class="field"><span data-i18n="ui.tag.technique"></span>
+      <select id="attack-artefact-technique"><option value="" data-i18n="ui.tag.none"></option></select></label>
+    <p class="hint" id="attack-artefact-note" hidden></p>
+    <label class="field"><span data-i18n="ui.tag.note"></span>
+      <textarea id="attack-artefact-text" rows="3"></textarea></label>
+    <menu>
+      <button value="cancel" class="ghost" data-i18n="ui.tag.cancel"></button>
+      <button value="ok" class="solid" data-i18n="ui.attack_artefact.attribute"></button>
+    </menu>
+  </form>
+</dialog>
+
 <dialog id="dlg-busy" class="busy">
   <button type="button" class="dlg-x" id="busy-min" data-i18n-aria="tooltips.mark.minimise_task_tray" data-i18n="ui.busy.busy_min"></button>
   <h2 id="busy-title" data-i18n="ui.busy.busy_title"></h2>

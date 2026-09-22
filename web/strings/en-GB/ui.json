@@ -26,6 +26,9 @@
       "other": ", {count} proposed and not yet confirmed"
     }
   },
+  "attack_artefact.attribute": "Attribute",
+  "attack_artefact.attribute_menu": "Attribute ATT&CK technique…",
+  "attack_artefact.title": "Attribute an ATT&CK technique",
   "audit.audit_log": "Audit log",
   "audit.close": "Close",
   "audit_log_chain_integrity": "audit log chain integrity",
@@ -719,6 +722,7 @@
   "tag.optional": "optional",
   "tag.tag": "Tag",
   "tag.tag_item": "Tag item",
+  "tag.technique": "ATT&CK technique",
   "tagged_items_2": "tagged items…",
   "tags.hashes": "Hashes",
   "tags.remove_tag": "Remove tag",
