@@ -37,10 +37,16 @@ def stamp(image_path, offset):
         return None
     return "%d:%d:%d:%d" % (VERSION, offset, st.st_size, int(st.st_mtime))
 
-def path_for(cache_dir, image_path, offset):
-    base = os.path.basename(image_path) or "image"
+PREFIX = "mft-"
+
+def prefix_for(image_path):
+    base = os.path.basename(image_path or "") or "image"
     safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in base)[:60]
-    return os.path.join(cache_dir, "mft-%s-%d.sqlite" % (safe, offset))
+    return "%s%s-" % (PREFIX, safe)
+
+def path_for(cache_dir, image_path, offset):
+    return os.path.join(cache_dir,
+                        "%s%d.sqlite" % (prefix_for(image_path), offset))
 
 def save(path, tree, built_from):
     if not built_from:

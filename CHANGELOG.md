@@ -25,6 +25,47 @@ records, not how the code changed.
   A clear-key volume now unlocks with one click and no secret; a
   startup-key volume unlocks by pointing at its `.BEK` file
   ([#53](https://github.com/switch-nz/strata/issues/53)).
+- **Compact** in the Cases view gives back disk space left by deleted and
+  replaced work: it merges the content index and rewrites the case databases.
+  Nothing recorded changes, and the audit log records the size before and
+  after. It refuses, and changes nothing, when the disk has no room for the
+  rewrite.
+
+### Changed
+
+- **The content index keeps its text compressed, and indexed search is much
+  faster.** Each document's text is now stored once, zlib-compressed, instead
+  of as a second uncompressed copy inside the search index, which typically
+  makes the index about a third smaller. Searches find exactly the same hits
+  in the same order. They are faster because a snippet is now cut from each
+  hit's text only as far as the first place a term occurs, where before the
+  whole of every matching document was re-read — a search whose hits include
+  large files goes from tens of seconds to a few — and because counting what
+  is indexed no longer reads every document (seconds, twice before every
+  search, now instant). A snippet shows the passage around the first occurrence of a
+  term; before, it could be a later passage FTS5 scored higher. An existing
+  index is converted when its case is opened, and stays searchable until it
+  is.
+- **A full index keeps at most 8 MB of text from any one file.** Every byte is
+  still read, but program binaries, browser cache blocks and `$MFT` produced
+  tens of megabytes of text each, and the index over that text roughly doubled its size again. Files that reach the limit
+  are counted and named as a finding, so what is not searchable is stated.
+
+### Fixed
+
+- **The content index now moves out of older case records.** Cases indexed
+  before the index lived in the cache folder were meant to move it there when
+  opened, but the request never reached the engine, so the whole index
+  stayed inside `case.sqlite` and every rebuild added to it, taking the case
+  record to many gigabytes. When the
+  disk has no room for the move it is now deferred and recorded in the audit
+  log, and a move that fails part way is recorded rather than dropped.
+- **Removing an exhibit no longer leaves its timeline behind.** On Windows a
+  timeline that was briefly open could not be deleted and was silently kept;
+  deletion now retries, and opening a case removes derived files (timelines,
+  directory caches) belonging to exhibits no longer in it, recorded in the
+  audit log as `cache.swept`.
+- Background tasks can be followed with a case open and no evidence loaded.
 
 ## [0.3.0] - 2026-09-23
 

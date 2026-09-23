@@ -8773,6 +8773,7 @@ $('#btn-new-case')?.addEventListener('click', newCaseDialog);
 $('#btn-open-case')?.addEventListener('click', () => caseDialog());
 $('#btn-case-add')?.addEventListener('click', () => openDialog({ add: !!S.casePath }));
 $('#btn-close-case')?.addEventListener('click', closeCaseDialog);
+$('#btn-compact-case')?.addEventListener('click', compactCase);
 $('#newcase-name')?.addEventListener('input', pathHint);
 $('#newcase-path')?.addEventListener('input', pathHint);
 $('#dlg-new-case')?.addEventListener('close', () => {
@@ -8987,9 +8988,29 @@ async function relocateIndex(pending) {
   const t = await api.post('index/relocate', {}).catch(() => null);
   if (!t || t.error || t.nothing_to_do) return;
   const r = await awaitTask(t, txt('ui.index.moving'));
-  if (r && r.moved) {
+  if (r && r.moved && r.converted) {
+    toast(txt('messages.index_converted', {
+      before: fmt.bytes(r.before), after: fmt.bytes(r.after) }), 'task');
+  } else if (r && r.moved) {
     toast(txt('messages.index_moved', { count: r.moved }), 'task');
+  } else if (r && r.deferred) {
+    toast(txt('messages.index_move_deferred', {
+      need: fmt.bytes(r.need), free: fmt.bytes(r.free) }));
+  } else if (r && r.error) {
+    toast(txt('messages.index_move_failed', { error: r.error }));
   }
+}
+
+async function compactCase() {
+  if (!S.casePath) return toast(txt('messages.cases.none_open'));
+  const t = await api.post('case/compact', {}).catch(() => null);
+  if (!t) return;
+  if (t.error) return toast(t.tasks?.length ? `${t.error} ${t.advice}` : t.error);
+  const r = await awaitTask(t, txt('ui.cases.compacting'));
+  if (!r) return;
+  if (!r.compacted) return toast(r.error || txt('messages.cases.compact_failed'));
+  toast(txt('messages.cases.compacted', {
+    before: fmt.bytes(r.before), after: fmt.bytes(r.after) }), 'task');
 }
 
 async function loadVersion() {

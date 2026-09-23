@@ -84,6 +84,12 @@ class FakeCase:
     def set_index_meta(self, key, value):
         self.meta[key] = value
 
+    def index_add(self, rows):
+        self.index.executemany("INSERT", rows)
+
+    def index_remove(self, where="", args=()):
+        pass
+
 
 class Build(unittest.TestCase):
 
@@ -111,6 +117,24 @@ class Build(unittest.TestCase):
         case = FakeCase()
         textindex.build(fs, case, 0, 0, filters={"extensions": ["txt"]})
         self.assertNotIn("notes.dat", fs.read_calls)
+
+    def test_a_full_index_keeps_at_most_the_full_cap_of_text_per_file(self):
+        fs = FakeFs({0: [{"name": "big.exe", "path": "/big.exe",
+                          "is_dir": False, "size": 4000, "mft": 1},
+                         {"name": "small.txt", "path": "/small.txt",
+                          "is_dir": False, "size": 20, "mft": 2}]},
+                    content={"big.exe": b"readable text\0" * 300,
+                             "small.txt": b"just a little text"})
+        case = FakeCase()
+        with mock.patch.object(textindex, "FULL_TEXT_PER_FILE", 1000):
+            r = textindex.build(fs, case, 0, 0, read_bytes=None,
+                                max_text=None)
+        bodies = {row[1]: row[2] for batch in case.index.batches
+                  for row in batch}
+        self.assertEqual(len(bodies["/big.exe"]), 1000)
+        self.assertLess(len(bodies["/small.txt"]), 1000)
+        self.assertEqual(r["text_capped"], 1)
+        self.assertEqual(r["text_cap"], 1000)
 
     def test_rows_flush_in_batches_rather_than_once_at_the_end(self):
         case = FakeCase()

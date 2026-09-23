@@ -20,6 +20,8 @@
   "carve.signature_unchecked": "The signature could not be checked.",
   "case_evidence_yet": "This case has no evidence in it yet.",
   "cases.closed": "Closed {name}.",
+  "cases.compact_failed": "The case was not compacted.",
+  "cases.compacted": "Case compacted: {before} before, {after} now.",
   "cases.forgotten": "Removed from the recent list. The case file was not touched.",
   "cases.gone": "There is no case file at {path} any more. It may have been moved.",
   "cases.none_open": "No case is open.",
@@ -59,6 +61,9 @@
   "hash_chain_intact_across_all_entries": "Hash chain intact across all entries.",
   "imported_entries_hashes_name": "Imported {entries} hashes as \"{name}\".",
   "index_cleared": "Index cleared.",
+  "index_converted": "The content index was compressed: {before} before, {after} now. Searches find the same things.",
+  "index_move_deferred": "The content index has not been brought up to date: that needs about {need} free and the disk has {free}. Free some space and reopen the case.",
+  "index_move_failed": "Bringing the content index up to date failed and the new copy was discarded ({error}). The index is unchanged and it will be tried again next time.",
   "index_moved": {
     "one": "The content index moved to the case's cache folder — {count} document.",
     "other": "The content index moved to the case's cache folder — {count} documents."

@@ -311,6 +311,62 @@ def run(config_dir, log_path):
                 raise AssertionError("files changed: %r -> %r" % (before, after))
             return "empty file and SQLite database refused, unchanged"
 
+        def wait_task(t):
+            deadline = time.time() + 60
+            while time.time() < deadline:
+                got = get_json(opener, base + "/api/task?"
+                               + urllib.parse.urlencode({"id": t["id"]}))
+                if got.get("state") not in (None, "running"):
+                    return got
+                time.sleep(0.2)
+            raise AssertionError("task %s did not finish" % t.get("id"))
+
+        legacy = os.path.join(config_dir, "legacy.strata")
+
+        def legacy_index_moves():
+            # A case from before the index lived in cache/. The interface
+            # POSTs to /api/index/relocate on open; that route used to be
+            # GET-only, so the move never ran and the record kept the index.
+            post_json(opener, base + "/api/case/new",
+                      {"path": legacy, "name": "legacy",
+                       "examiner": EXAMINER})
+            post_json(opener, base + "/api/case/close", {})
+            db = sqlite3.connect(os.path.join(legacy, "case.sqlite"))
+            db.executescript("""
+                CREATE VIRTUAL TABLE content_index USING fts5(
+                    name, path, body, node UNINDEXED, part UNINDEXED,
+                    size UNINDEXED, deleted UNINDEXED, modified UNINDEXED,
+                    abs_offset UNINDEXED, kind UNINDEXED, evidence UNINDEXED,
+                    tokenize = 'unicode61');
+            """)
+            db.executemany(
+                "INSERT INTO content_index VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                [("f%d" % i, "/f%d" % i, "needle %d" % i, str(i), 0, 1, 0,
+                  "", "", "file", "1") for i in range(5)])
+            db.commit()
+            db.close()
+            post_json(opener, base + "/api/case/open",
+                      {"path": legacy, "examiner": EXAMINER})
+            done = wait_task(post_json(opener, base + "/api/index/relocate",
+                                       {}))
+            if (done.get("result") or {}).get("moved") != 5:
+                raise AssertionError("relocation did not move the index: %r"
+                                     % done)
+            db = sqlite3.connect(os.path.join(legacy, "case.sqlite"))
+            left = db.execute("SELECT name FROM sqlite_master "
+                              "WHERE name='content_index'").fetchall()
+            db.close()
+            if left:
+                raise AssertionError("content_index is still in case.sqlite")
+            return "5 documents moved to cache/"
+
+        def compact_runs():
+            done = wait_task(post_json(opener, base + "/api/case/compact", {}))
+            got = done.get("result") or {}
+            if not got.get("compacted"):
+                raise AssertionError("compact did not run: %r" % done)
+            return "%d -> %d bytes" % (got["before"], got["after"])
+
         check("/api/version reports a version", version)
         check("/ serves the app shell", shell)
         check("/app.js is served", asset("/app.js", ("javascript", "ecmascript")))
@@ -325,6 +381,9 @@ def run(config_dir, log_path):
         check("prefs clamp an out-of-range width", prefs_clamps)
         check("prefs drop an unknown key", unknown_key)
         check("a file that is not a case is left untouched", non_case_untouched)
+        check("a legacy case's index moves out of the record",
+              legacy_index_moves)
+        check("a case with no evidence open can be compacted", compact_runs)
 
     finally:
         code = stop(proc)

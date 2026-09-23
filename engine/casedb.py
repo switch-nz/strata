@@ -2,9 +2,11 @@ import functools
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import threading
 import time
+import zlib
 from urllib.request import pathname2url
 
 from . import fuzzyhash
@@ -255,6 +257,9 @@ INDEX_META_SCHEMA = """
 CREATE TABLE IF NOT EXISTS index_meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
+# The layout every index had before it was compressed: FTS5 keeping its own
+# copy of each document. Still read, so an index built that way stays
+# searchable until it is converted (Case.relocate_index).
 FTS_SCHEMA = """
 CREATE VIRTUAL TABLE IF NOT EXISTS content_index USING fts5(
     name, path, body,
@@ -264,8 +269,58 @@ CREATE VIRTUAL TABLE IF NOT EXISTS content_index USING fts5(
     tokenize = 'unicode61');
 """
 
+INDEX_SCHEMA = """
+CREATE TABLE IF NOT EXISTS content_docs (
+    id INTEGER PRIMARY KEY,
+    name, path, body BLOB,
+    node, part, size, deleted, modified, abs_offset, kind, evidence);
+CREATE INDEX IF NOT EXISTS content_docs_scope
+    ON content_docs(part, evidence, kind);
+CREATE INDEX IF NOT EXISTS content_docs_evidence
+    ON content_docs(evidence, kind);
+CREATE VIEW IF NOT EXISTS content_text AS
+    SELECT id, name, path, inflate(body) AS body, node, part, size, deleted,
+           modified, abs_offset, kind, evidence
+    FROM content_docs;
+CREATE VIRTUAL TABLE IF NOT EXISTS content_index USING fts5(
+    name, path, body,
+    node UNINDEXED, part UNINDEXED, size UNINDEXED,
+    deleted UNINDEXED, modified UNINDEXED,
+    abs_offset UNINDEXED, kind UNINDEXED, evidence UNINDEXED,
+    content = 'content_text', content_rowid = 'id',
+    tokenize = 'unicode61');
+"""
+
 FTS_COLUMNS = {"name", "path", "body", "node", "part", "size", "deleted",
                "modified", "abs_offset", "kind", "evidence"}
+
+DOC_COLUMNS = ("name", "path", "body", "node", "part", "size", "deleted",
+               "modified", "abs_offset", "kind", "evidence")
+
+PLAIN, COMPRESSED = "plain", "compressed"
+
+def deflate_text(text):
+    return zlib.compress(text.encode("utf-8"), 6) if text else None
+
+def inflate_text(blob):
+    return zlib.decompress(blob).decode("utf-8") if blob else ""
+
+def add_index_functions(conn):
+    # content_text calls inflate(), so every connection that reads or writes
+    # a compressed index needs it -- FTS5 reads through that view for
+    # snippet(), 'delete' and 'rebuild'.
+    conn.create_function("inflate", 1, inflate_text, deterministic=True)
+    conn.create_function("deflate", 1, deflate_text, deterministic=True)
+
+def index_layout(conn, schema="main"):
+    names = {r[0] for r in conn.execute(
+        "SELECT name FROM %s.sqlite_master WHERE type IN ('table','view')"
+        % schema)}
+    if "content_docs" in names and "content_index" in names:
+        return COMPRESSED
+    if "content_index" in names:
+        return PLAIN
+    return None
 
 ARTEFACT_VERSION = {
     "browser": 2, "recyclebin": 1, "lnk": 2, "appcompat": 1, "prefetch": 1,
@@ -378,6 +433,30 @@ def _refuse_if_not_case(path):
     if os.path.lexists(record) and not _looks_like_case_db(record):
         raise NotACase(_t("casedb.not_a_case") % path)
 
+SPACE_HEADROOM = 64 << 20
+
+def _file_size(path):
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
+
+def _remove_quietly(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+def _uri(path, ro=False):
+    return "file:%s%s" % (pathname2url(os.path.abspath(path)),
+                          "?mode=ro" if ro else "")
+
+def _free_space(path):
+    try:
+        return shutil.disk_usage(os.path.dirname(os.path.abspath(path))).free
+    except OSError:
+        return None
+
 def db_path(case_path):
     return os.path.join(case_path, DB_NAME)
 
@@ -404,10 +483,12 @@ class Case:
             self.db = sqlite3.connect(uri, uri=True, check_same_thread=False,
                                       timeout=30.0)
             self.db.row_factory = sqlite3.Row
+            add_index_functions(self.db)
             self.index_reset = False
             self.index_db = None
             self.index_pending = 0
             self.index = self.db
+            self.index_layout = index_layout(self.db)
             self.fts = False
             return
         fresh = not os.path.isfile(self.db_path)
@@ -426,6 +507,7 @@ class Case:
         self.index_db = None
         self.index_pending = 0
         self.index = self.db
+        self.index_layout = None
         try:
             self._open_index()
             self.fts = True
@@ -525,89 +607,308 @@ class Case:
             except sqlite3.Error:
                 pass
 
+    def _index_path(self):
+        return os.path.join(self.cache_dir(create=True), INDEX_NAME)
+
+    def _connect_index(self):
+        conn = sqlite3.connect(self._index_path(), check_same_thread=False,
+                               timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        add_index_functions(conn)
+        return conn
+
     def _open_index(self):
+        add_index_functions(self.db)
         try:
             n = self.db.execute(
                 "SELECT COUNT(*) c FROM content_index").fetchone()["c"]
         except sqlite3.Error:
             n = 0
-        cache = self.cache_dir(create=True)
-        self.index_db = sqlite3.connect(os.path.join(cache, INDEX_NAME),
-                                        check_same_thread=False, timeout=30.0)
-        self.index_db.row_factory = sqlite3.Row
-        self.index_db.executescript(FTS_SCHEMA)
+        self.index_db = self._connect_index()
         self.index_db.executescript(INDEX_META_SCHEMA)
+        cached = index_layout(self.index_db)
+        cached_n = 0
+        if cached == PLAIN:
+            cached_n = self.index_db.execute(
+                "SELECT COUNT(*) c FROM content_index").fetchone()["c"]
+            if not cached_n:
+                # Nothing in it worth converting: start over in the new
+                # layout rather than carrying an empty old one forward.
+                self.index_db.execute("DROP TABLE content_index")
+                cached = None
+        if cached is None:
+            self.index_db.executescript(INDEX_SCHEMA)
+            cached = COMPRESSED
         self.index_db.commit()
+        self.index = self.index_db
+        self.index_layout = cached
+        if cached == PLAIN:
+            # Built before the text was compressed. It stays searchable as it
+            # is until relocate_index() converts it.
+            self.index_pending = cached_n
         if n:
             cols = {r[1] for r in self.db.execute(
                 "PRAGMA table_info(content_index)")}
             if FTS_COLUMNS <= cols:
                 self.index_pending = n
                 self.index = self.db
+                self.index_layout = PLAIN
             else:
                 self.db.execute("DROP TABLE IF EXISTS content_index")
                 self.db.execute(
                     "DELETE FROM meta WHERE key LIKE 'index_part_%'")
                 self.db.commit()
-                self.index = self.index_db
                 self.index_reset = True
                 self.log("index.reset", {
                     "documents": n,
                     "reason": _t("casedb.index_reset_reason")})
                 self.db.commit()
-        else:
-            self.index = self.index_db
 
     def relocate_index(self, progress=None):
+        # Two kinds of index are brought into the current layout here: one
+        # still inside the case record, from before the index lived in
+        # cache/, and one in cache/ built before its text was compressed.
+        # Either way a new index file is written beside the old one and only
+        # swapped in once it holds every document, so a failure part way
+        # leaves the old index exactly as it was, and still searchable.
         if not self.index_pending or self.index_db is None:
             return {"moved": 0}
         want = self.index_pending
-        cache_path = os.path.join(self.cache_dir(create=True), INDEX_NAME)
-        if progress:
-            progress(0.05)
-        self.db.execute("ATTACH DATABASE ? AS idx", (cache_path,))
-        try:
-            self.db.execute("DELETE FROM idx.content_index")
-            self.db.execute(
-                "INSERT INTO idx.content_index "
-                "(name,path,body,node,part,size,deleted,modified,abs_offset,"
-                " kind,evidence) "
-                "SELECT name,path,body,node,part,size,deleted,modified,"
-                "abs_offset,kind,evidence FROM main.content_index")
-            got = self.db.execute(
-                "SELECT COUNT(*) c FROM idx.content_index").fetchone()["c"]
-            for row in self.db.execute(
-                    "SELECT key, value FROM main.meta "
-                    "WHERE key LIKE 'index_part_%'"):
-                self.db.execute(
-                    "INSERT OR REPLACE INTO idx.index_meta VALUES (?,?)",
-                    (row["key"], row["value"]))
+        in_record = self.index is self.db
+        cache_path = self._index_path()
+        source = self.db_path if in_record else cache_path
+        # The new file is smaller than the index it is made from, so that
+        # index's size bounds the room it needs. Starting without the room
+        # ends in "disk full" halfway through a multi-gigabyte copy -- which,
+        # before this check, rolled back without a word and was retried on
+        # every open.
+        need = _file_size(source) + SPACE_HEADROOM
+        free = _free_space(cache_path)
+        if free is not None and free < need:
+            self.log("index.relocate.deferred", {
+                "documents": want, "need_bytes": need, "free_bytes": free,
+                "note": _t("casedb.index_relocate_deferred")})
             self.db.commit()
-        finally:
-            self.db.execute("DETACH DATABASE idx")
-        if progress:
-            progress(0.6)
+            return {"moved": 0, "deferred": True, "need": need, "free": free}
+        before = _file_size(source)
+        building = cache_path + ".part"
+        try:
+            got = self._build_index_file(source, in_record, building,
+                                         progress)
+        except (sqlite3.Error, OSError) as exc:
+            _remove_quietly(building)
+            self.log("index.relocate.failed", {
+                "expected": want, "error": str(exc),
+                "note": _t("casedb.index_relocate_failed")})
+            self.db.commit()
+            return {"moved": 0, "expected": want, "error": str(exc)}
         if got != want:
-            self.log("index.relocate.failed", {"expected": want, "copied": got})
+            _remove_quietly(building)
+            self.log("index.relocate.failed", {
+                "expected": want, "copied": got,
+                "note": _t("casedb.index_relocate_failed")})
             self.db.commit()
             return {"moved": 0, "expected": want, "copied": got}
 
-        self.db.execute("DROP TABLE IF EXISTS content_index")
-        self.db.execute("DELETE FROM meta WHERE key LIKE 'index_part_%'")
-        self.db.commit()
-        if progress:
-            progress(0.7)
-        self.db.execute("VACUUM")
-        self.db.commit()
-        self.index_pending = 0
-        self.index = self.index_db
-        self.log("index.relocated", {
-            "documents": got, "to": os.path.join(CACHE_DIR, INDEX_NAME),
-            "note": _t("casedb.index_relocated")})
+        with _case_lock(self.path):
+            self.index_db.close()
+            try:
+                os.replace(building, cache_path)
+            except OSError as exc:
+                # Windows will not replace a file another connection still
+                # has open -- a second session on this case, say. The old
+                # index is untouched, so reopen it and say why.
+                self.index_db = self._connect_index()
+                if not in_record:
+                    self.index = self.index_db
+                _remove_quietly(building)
+                self.log("index.relocate.failed", {
+                    "expected": want, "error": str(exc),
+                    "note": _t("casedb.index_relocate_failed")})
+                self.db.commit()
+                return {"moved": 0, "expected": want, "error": str(exc)}
+            self.index_db = self._connect_index()
+            self.index = self.index_db
+            self.index_layout = COMPRESSED
+            self.index_pending = 0
+        after = _file_size(cache_path)
+        if in_record:
+            self.db.execute("DROP TABLE IF EXISTS content_index")
+            self.db.execute("DELETE FROM meta WHERE key LIKE 'index_part_%'")
+            self.db.commit()
+            if progress:
+                progress(0.95)
+            self.db.execute("VACUUM")
+            self.db.commit()
+            self.log("index.relocated", {
+                "documents": got, "to": os.path.join(CACHE_DIR, INDEX_NAME),
+                "note": _t("casedb.index_relocated")})
+        else:
+            self.log("index.converted", {
+                "documents": got, "before_bytes": before,
+                "after_bytes": after,
+                "note": _t("casedb.index_converted")})
         self.db.commit()
         if progress:
             progress(1.0)
-        return {"moved": got}
+        return {"moved": got, "converted": not in_record,
+                "before": before, "after": after}
+
+    def _build_index_file(self, source, in_record, dest, progress=None):
+        _remove_quietly(dest)
+        conn = sqlite3.connect(_uri(dest), uri=True)
+        try:
+            add_index_functions(conn)
+            # A file nothing else can see yet: if this stops part way it is
+            # deleted, not recovered, so a journal would only cost time.
+            conn.execute("PRAGMA journal_mode=OFF")
+            conn.execute("PRAGMA synchronous=OFF")
+            conn.executescript(INDEX_SCHEMA + INDEX_META_SCHEMA)
+            conn.execute("ATTACH DATABASE ? AS src", (_uri(source, ro=True),))
+            if progress:
+                progress(0.05)
+            conn.execute(
+                "INSERT INTO content_docs (id, %s) "
+                "SELECT rowid, name, path, deflate(body), node, part, size, "
+                "deleted, modified, abs_offset, kind, evidence "
+                "FROM src.content_index" % ", ".join(DOC_COLUMNS))
+            if in_record:
+                conn.execute(
+                    "INSERT OR REPLACE INTO index_meta SELECT key, value "
+                    "FROM src.meta WHERE key LIKE 'index_part_%'")
+            else:
+                conn.execute("INSERT OR REPLACE INTO index_meta "
+                             "SELECT key, value FROM src.index_meta")
+            conn.commit()
+            conn.execute("DETACH DATABASE src")
+            if progress:
+                progress(0.5)
+            # Tokenised afresh from the compressed text rather than copied
+            # across, so the index is known to agree with what it indexes.
+            conn.execute("INSERT INTO content_index(content_index) "
+                         "VALUES('rebuild')")
+            conn.commit()
+            if progress:
+                progress(0.9)
+            return conn.execute(
+                "SELECT COUNT(*) FROM content_docs").fetchone()[0]
+        finally:
+            conn.close()
+
+    def index_add(self, rows):
+        # rows are (name, path, body, node, part, size, deleted, modified,
+        # abs_offset, kind, evidence), body as text.
+        if not rows:
+            return
+        with _case_lock(self.path):
+            if self.index_layout != COMPRESSED:
+                self.index.executemany(
+                    "INSERT INTO content_index (%s) VALUES (%s)"
+                    % (",".join(DOC_COLUMNS), ",".join("?" * 11)), rows)
+                self.index.commit()
+                return
+            start = self.index.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM content_docs").fetchone()[0]
+            ids = range(start + 1, start + 1 + len(rows))
+            self.index.executemany(
+                "INSERT INTO content_docs (id, %s) VALUES (%s)"
+                % (",".join(DOC_COLUMNS), ",".join("?" * 12)),
+                [(i, r[0], r[1], deflate_text(r[2])) + tuple(r[3:])
+                 for i, r in zip(ids, rows)])
+            self.index.executemany(
+                "INSERT INTO content_index (rowid, name, path, body) "
+                "VALUES (?,?,?,?)",
+                [(i, r[0], r[1], r[2]) for i, r in zip(ids, rows)])
+            self.index.commit()
+
+    def index_remove(self, where="", args=()):
+        # where is over the document columns, e.g. "part=? AND evidence=?".
+        clause = (" WHERE " + where) if where else ""
+        with _case_lock(self.path):
+            if self.index_layout != COMPRESSED:
+                self.index.execute("DELETE FROM content_index" + clause, args)
+                self.index.commit()
+                return
+            n = self.index.execute(
+                "SELECT COUNT(*) FROM content_docs" + clause,
+                args).fetchone()[0]
+            if not n:
+                return
+            total = self.index.execute(
+                "SELECT COUNT(*) FROM content_docs").fetchone()[0]
+            if n == total:
+                self.index.execute("INSERT INTO content_index(content_index) "
+                                   "VALUES('delete-all')")
+            else:
+                # FTS5 removes a document by being handed the words it
+                # indexed, so each one is read back once on the way out.
+                self.index.execute(
+                    "INSERT INTO content_index(content_index, rowid, name, "
+                    "path, body) SELECT 'delete', id, name, path, "
+                    "inflate(body) FROM content_docs" + clause, args)
+            self.index.execute("DELETE FROM content_docs" + clause, args)
+            self.index.commit()
+
+    def index_documents(self):
+        return "content_docs" if self.index_layout == COMPRESSED \
+            else "content_index"
+
+    def storage(self):
+        files = {DB_NAME: _file_size(self.db_path)}
+        cache = self.cache_dir()
+        try:
+            names = sorted(os.listdir(cache))
+        except OSError:
+            names = []
+        for name in names:
+            files[CACHE_DIR + "/" + name] = _file_size(os.path.join(cache,
+                                                                    name))
+        return {"files": files, "total": sum(files.values())}
+
+    def compact(self, progress=None):
+        # Everything here is lossless. Merging the index's segments and
+        # rewriting both databases changes how the pages are laid out, not a
+        # row of what they hold -- the audit entry records the sizes either
+        # side so the change in the record is accounted for.
+        if self.index_pending:
+            return {"compacted": False,
+                    "error": _t("casedb.compact_index_pending")}
+        before = self.storage()
+        # VACUUM writes a fresh copy of a database before replacing it, so
+        # the largest file bounds the room it needs.
+        need = max([_file_size(self.db_path)] +
+                   ([_file_size(os.path.join(self.cache_dir(), INDEX_NAME))]
+                    if self.index is not self.db else [])) + SPACE_HEADROOM
+        free = _free_space(self.db_path)
+        if free is not None and free < need:
+            return {"compacted": False, "need": need, "free": free,
+                    "error": _t("casedb.compact_no_room")}
+        with _case_lock(self.path):
+            if progress:
+                progress(0.05)
+            if self.fts:
+                self.index.execute(
+                    "INSERT INTO content_index(content_index) "
+                    "VALUES('optimize')")
+                self.index.commit()
+            if progress:
+                progress(0.5)
+            if self.index is not self.db:
+                self.index.execute("VACUUM")
+            if progress:
+                progress(0.75)
+            self.db.commit()
+            self.db.execute("VACUUM")
+            after = self.storage()
+            self.log("case.compact", {
+                "before_bytes": before["total"], "after_bytes": after["total"],
+                "record_before": before["files"][DB_NAME],
+                "record_after": after["files"][DB_NAME]})
+            self.db.commit()
+        if progress:
+            progress(1.0)
+        return {"compacted": True, "before": before["total"],
+                "after": after["total"]}
 
     def _migrate_fts(self):
         cols = {r[1] for r in self.index.execute(
@@ -620,7 +921,13 @@ class Case:
         except sqlite3.OperationalError:
             n = 0
         self.index.execute("DROP TABLE IF EXISTS content_index")
-        self.index.executescript(FTS_SCHEMA)
+        if self.index is self.db:
+            self.index.executescript(FTS_SCHEMA)
+        else:
+            self.index.execute("DROP TABLE IF EXISTS content_docs")
+            self.index.executescript(INDEX_SCHEMA)
+            self.index_layout = COMPRESSED
+            self.index_pending = 0
         self._forget_coverage()
         self.index.commit()
         if n:
@@ -681,8 +988,8 @@ class Case:
                 out[table] = n
         try:
             n = self.index.execute(
-                "SELECT COUNT(*) c FROM content_index WHERE evidence=?",
-                (str(evidence_id),)).fetchone()["c"]
+                "SELECT COUNT(*) c FROM %s WHERE evidence=?"
+                % self.index_documents(), (str(evidence_id),)).fetchone()["c"]
             if n:
                 out["content_index"] = n
         except sqlite3.Error:
@@ -708,9 +1015,7 @@ class Case:
             except sqlite3.Error:
                 continue
         try:
-            self.index.execute("DELETE FROM content_index WHERE evidence=?",
-                               (str(evidence_id),))
-            self.index.commit()
+            self.index_remove("evidence=?", (str(evidence_id),))
         except sqlite3.Error:
             pass
         self.db.execute("DELETE FROM evidence WHERE id=?", (evidence_id,))
