@@ -1,5 +1,6 @@
 from .streams import UnsupportedStream
 from .ranges import read_runs
+from .. import xattr as xattr_mod
 import datetime
 import struct
 
@@ -12,6 +13,10 @@ REC_FOLDER = 0x0001
 REC_FILE = 0x0002
 REC_FOLDER_THREAD = 0x0003
 REC_FILE_THREAD = 0x0004
+
+ATTR_INLINE_DATA = 0x10
+ATTR_FORK_DATA = 0x20
+ATTR_EXTENTS = 0x30
 
 KIND_LEAF = 0xFF
 
@@ -152,8 +157,13 @@ class HfsPlus:
             self.extents = BTree(self, self.extents_fork, "extents overflow")
         except ValueError:
             self.extents = None
+        try:
+            self.attrs = BTree(self, self.attributes_fork, "attributes")
+        except ValueError:
+            self.attrs = None
         self._by_parent = None
         self._threads = None
+        self._xattrs = None
 
     def _index(self):
         if self._by_parent is not None:
@@ -187,6 +197,54 @@ class HfsPlus:
                 by_parent.setdefault(parent, []).append(rec)
         self._by_parent, self._threads = by_parent, threads
         return by_parent, threads
+
+    @staticmethod
+    def _attr_record(node, key_off, data_off):
+        """(file_id, {"name", "size", "value"?}) for one attributes B-tree
+        leaf record, or None if the key or record header does not fit in
+        the node. Only kHFSPlusAttrInlineData (0x10) carries its value
+        here -- the value lives inside the record; a fork-based attribute
+        (0x20, used once an attribute is too large to stay inline) points
+        at allocation blocks this does not walk, so only its name and
+        size are reported."""
+        if key_off + 14 > len(node):
+            return None
+        file_id = struct.unpack_from(">I", node, key_off + 4)[0]
+        name_len = struct.unpack_from(">H", node, key_off + 12)[0]
+        raw_name = node[key_off + 14:key_off + 14 + name_len * 2]
+        name = raw_name.decode("utf-16-be", "replace")
+        if data_off + 4 > len(node):
+            return file_id, {"name": name, "size": None}
+        rtype = struct.unpack_from(">I", node, data_off)[0]
+        if rtype == ATTR_INLINE_DATA and data_off + 12 <= len(node):
+            size = struct.unpack_from(">I", node, data_off + 8)[0]
+            value = node[data_off + 12:data_off + 12 + size]
+            if len(value) == size:
+                return file_id, {"name": name, "size": size, "value": value}
+            return file_id, {"name": name, "size": size}
+        return file_id, {"name": name, "size": None}
+
+    def _xattrs_index(self):
+        if self._xattrs is not None:
+            return self._xattrs
+        by_cnid = {}
+        if self.attrs:
+            for node in self.attrs.walk_leaves():
+                for off in self.attrs.records(node):
+                    if off + 2 > len(node):
+                        continue
+                    key_len = struct.unpack_from(">H", node, off)[0]
+                    data_off = off + 2 + key_len
+                    data_off += data_off & 1
+                    if data_off > len(node):
+                        continue
+                    got = self._attr_record(node, off, data_off)
+                    if got is None:
+                        continue
+                    file_id, rec = got
+                    by_cnid.setdefault(file_id, []).append(rec)
+        self._xattrs = by_cnid
+        return by_cnid
 
     def _folder(self, node, off, name, parent):
         (valence, cnid, created, modified, attr_mod, accessed,
@@ -320,6 +378,9 @@ class HfsPlus:
                             % entry["resource_size"])
         if entry.get("is_dir"):
             info["record_offset"] = None
+        xattrs = self._xattrs_index().get(entry.get("cnid"))
+        if xattrs:
+            info["xattrs"] = xattr_mod.for_client(xattrs)
         return info
 
     def label(self):

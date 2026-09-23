@@ -1912,19 +1912,38 @@ async function showEntry(e, part, from = null, stream = null) {
       read it.</p>` : ''}`;
 
   const xattrList = st.xattrs || [];
+  const xattrDecoded = d => {
+    if (Array.isArray(d)) {
+      return `<ul class="xattr-urls">${d.map(u => `<li class="mono">${esc(u)}</li>`).join('')}</ul>`;
+    }
+    return kv([
+      d.flags != null && [txt('ui.xattr.flags'), esc(d.flags)],
+      d.agent != null && [txt('ui.xattr.agent'), esc(d.agent)],
+      d.downloaded_at != null && [txt('ui.xattr.downloaded_at'), esc(d.downloaded_at)],
+      d.event_id != null && [txt('ui.xattr.event_id'), esc(d.event_id)],
+    ]);
+  };
   const xattrs = !xattrList.length ? '' : `<h3>${txt('ui.extended_attributes')}</h3>
     ${xattrList.map(a => {
-      const bytes = Uint8Array.from(atob(a.value || ''), c => c.charCodeAt(0));
+      const header = `<div class="runbar">
+          <span>${esc(a.name)}${a.truncated ? ' · truncated' : ''}</span>
+          <span class="len">${fmt.bytes(a.size)}</span>
+        </div>`;
+      if (a.value == null) {
+        return `${header}<p class="hint">${txt('ui.xattr.value_not_captured')}</p>`;
+      }
+      const bytes = Uint8Array.from(atob(a.value), c => c.charCodeAt(0));
+      if (a.decoded != null) {
+        return `${header}${a.name === 'com.apple.metadata:kMDItemWhereFroms'
+          ? `<p class="hint">${txt('ui.xattr.origin_urls')}</p>${xattrDecoded(a.decoded)}`
+          : xattrDecoded(a.decoded)}`;
+      }
       const preview = looksTextual(bytes)
         ? esc(decodeText(bytes).slice(0, 200))
         : Array.from(bytes.slice(0, 32))
             .map(b => b.toString(16).padStart(2, '0')).join(' ')
           + (bytes.length > 32 ? '…' : '');
-      return `<div class="runbar">
-          <span>${esc(a.name)}${a.truncated ? ' · truncated' : ''}</span>
-          <span class="len">${fmt.bytes(a.size)}</span>
-        </div>
-        <div class="hint mono">${preview}</div>`;
+      return `${header}<div class="hint mono">${preview}</div>`;
     }).join('')}`;
 
   const ent = st.entropy && st.entropy.entropy !== null ? `<h3>${txt('ui.show_entry.entropy')}</h3>

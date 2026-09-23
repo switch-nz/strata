@@ -1,5 +1,6 @@
 from .streams import UnsupportedStream
 from .ranges import read_runs
+from .. import xattr as xattr_mod
 import datetime
 import struct
 
@@ -459,13 +460,25 @@ class ApfsVolume:
         return {"name": name, "file_id": file_id, "added": added,
                 "kind": flags & 0x0F}
 
+    # Extended-attribute value flags (j_xattr_val_t).
+    XATTR_DATA_STREAM = 0x0001
+    XATTR_DATA_EMBEDDED = 0x0002
+
     @staticmethod
     def _parse_xattr(key, val):
         name = ""
         if len(key) >= 10:
             nlen = struct.unpack("<H", key[8:10])[0]
             name = key[10:10 + nlen].split(b"\x00")[0].decode("utf-8", "replace")
-        return {"name": name, "size": len(val)}
+        out = {"name": name, "size": len(val)}
+        if len(val) >= 4:
+            flags, xdata_len = struct.unpack_from("<HH", val, 0)
+            if flags & ApfsVolume.XATTR_DATA_EMBEDDED:
+                data = val[4:4 + xdata_len]
+                if len(data) == xdata_len:
+                    out["size"] = xdata_len
+                    out["value"] = data
+        return out
 
     def _size_of(self, oid, recs):
         ino = recs["inode"].get(oid)
@@ -578,7 +591,7 @@ class ApfsVolume:
             info["note"] = ("Volume is encrypted. Extents point at ciphertext; "
                             "this build does not decrypt.")
         if recs["xattr"].get(oid):
-            info["xattrs"] = recs["xattr"][oid]
+            info["xattrs"] = xattr_mod.for_client(recs["xattr"][oid])
         if ino and ino.get("size") is None and recs["extent"].get(oid):
             info["note"] = ("No data stream field on this inode, so the size "
                             "shown is the total of its extents and is rounded "

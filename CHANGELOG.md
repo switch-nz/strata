@@ -13,6 +13,18 @@ records, not how the code changed.
 
 ### Added
 
+- **Extended attributes on APFS and HFS+ files are now decoded, not just
+  listed.** APFS already walked a file's extended attributes but discarded
+  their value, and HFS+ located the Attributes fork without ever opening
+  it, so neither surfaced anything beyond an attribute's name and size.
+  Both now read the value when it's stored inline, and decode the two most
+  examination-relevant ones: `com.apple.quarantine` (Gatekeeper's download
+  flag — agent, timestamp, event id) and
+  `com.apple.metadata:kMDItemWhereFroms` (the URL a file was downloaded
+  from, and often the page that linked to it). The file inspector's
+  Extended Attributes section shows the decoded fields alongside the raw
+  value, and notes plainly when a large, fork-based attribute's content
+  wasn't captured.
 - **A ShimCache entry (or any artefact row) can now be attributed to an
   ATT&CK technique, and that attribution shows in the report.** ATT&CK
   attribution existed only for tagged files; an artefact row like a

@@ -904,5 +904,11 @@
   "words_words_checksum_failed": "{words} words · checksum failed",
   "words_words_checksum_holds": "{words} words · checksum holds",
   "write_examination_report": "Write the examination report",
+  "xattr.agent": "Agent",
+  "xattr.downloaded_at": "Downloaded",
+  "xattr.event_id": "Event ID",
+  "xattr.flags": "Flags",
+  "xattr.origin_urls": "Origin URL(s)",
+  "xattr.value_not_captured": "content not captured — stored outside the attribute record",
   "zone_observe_daylight_saving": "this zone does not observe daylight saving"
 }
