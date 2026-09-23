@@ -225,26 +225,60 @@ def build(fs, part_offset=0, start=None, end=None, include_accessed=True,
         "note": NOTE,
     }
 
+# Each file's path and name are stored once, in files, and events refer to
+# them by fid. fids and aids are handed out in path and action order, so
+# ordering events by (sort, fid, aid, id) is the same order as by
+# (sort, path, action, id). The events and flags views give readers the
+# columns a timeline has always had.
 SCHEMA = """
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
-CREATE TABLE events (
+CREATE TABLE files (fid INTEGER PRIMARY KEY, path TEXT NOT NULL, name TEXT);
+CREATE TABLE actions (aid INTEGER PRIMARY KEY, action TEXT NOT NULL);
+CREATE TABLE labels (lid INTEGER PRIMARY KEY, label TEXT NOT NULL);
+CREATE TABLE ev (
     id INTEGER PRIMARY KEY,
     sort REAL NOT NULL, time TEXT NOT NULL,
-    action TEXT NOT NULL, source TEXT NOT NULL,
-    name TEXT, path TEXT NOT NULL,
+    aid INTEGER NOT NULL, src INTEGER,
+    fid INTEGER NOT NULL, name TEXT,
     is_dir INTEGER NOT NULL, deleted INTEGER NOT NULL, size INTEGER,
     node TEXT, offset INTEGER, flagged INTEGER NOT NULL,
-    ev INTEGER, exhibit TEXT, part INTEGER, tags TEXT,
+    ev INTEGER, xid INTEGER, part INTEGER, tags TEXT,
     partial INTEGER NOT NULL);
-CREATE TABLE flags (
-    ev INTEGER, part INTEGER, node TEXT, path TEXT, name TEXT,
+CREATE TABLE fl (
+    ev INTEGER, part INTEGER, node TEXT, fid INTEGER NOT NULL, name TEXT,
     offset INTEGER, observations TEXT NOT NULL,
     created TEXT, fn_created TEXT, modified TEXT, fn_modified TEXT);
+CREATE VIEW events AS
+    SELECT e.id, e.sort, e.time, a.action, s.label AS source,
+           COALESCE(e.name, f.name) AS name, f.path, e.is_dir, e.deleted,
+           e.size, e.node, e.offset, e.flagged, e.ev, x.label AS exhibit,
+           e.part, e.tags, e.partial, e.fid, e.aid
+    FROM ev e JOIN files f ON f.fid = e.fid JOIN actions a ON a.aid = e.aid
+    LEFT JOIN labels s ON s.lid = e.src LEFT JOIN labels x ON x.lid = e.xid;
+CREATE VIEW flags AS
+    SELECT l.ev, l.part, l.node, f.path, COALESCE(l.name, f.name) AS name,
+           l.offset, l.observations, l.created, l.fn_created, l.modified,
+           l.fn_modified
+    FROM fl l JOIN files f ON f.fid = l.fid;
+"""
+
+# Rows are staged against provisional file and action numbers while the
+# timeline is built, because the final numbering depends on every path.
+_STAGE = """
+CREATE TABLE s_ev (
+    id INTEGER PRIMARY KEY, sort REAL, time TEXT, pa INTEGER, src INTEGER,
+    pf INTEGER, name TEXT, is_dir INTEGER, deleted INTEGER, size INTEGER,
+    node TEXT, offset INTEGER, flagged INTEGER, ev INTEGER, xid INTEGER,
+    part INTEGER, tags TEXT, partial INTEGER);
+CREATE TABLE s_fl (
+    seq INTEGER PRIMARY KEY, ev INTEGER, part INTEGER, node TEXT, pf INTEGER,
+    name TEXT, offset INTEGER, observations TEXT, created TEXT,
+    fn_created TEXT, modified TEXT, fn_modified TEXT);
 """
 
 _INSERT_EVENT = (
-    "INSERT INTO events (sort,time,action,source,name,path,is_dir,deleted,"
-    "size,node,offset,flagged,ev,exhibit,part,tags,partial) "
+    "INSERT INTO s_ev (sort,time,pa,src,pf,name,is_dir,deleted,size,node,"
+    "offset,flagged,ev,xid,part,tags,partial) "
     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
 
 def _replace(src, dest, tries=30):
@@ -262,17 +296,42 @@ class Writer:
     def __init__(self, dest):
         self.dest = dest
         self.part = "%s.%s.part" % (dest, uuid.uuid4().hex[:12])
-        self.db = sqlite3.connect(self.part)
+        self.stage = self.part + ".stage"
+        self.db = sqlite3.connect(self.stage)
         self.db.execute("PRAGMA journal_mode=OFF")
         self.db.execute("PRAGMA synchronous=OFF")
-        self.db.executescript(SCHEMA)
+        self.db.executescript(_STAGE)
         self._pending = []
         self.count = 0
         self.flags = 0
         self._minutes = {}
+        self._files = {}
+        self._actions = {}
+        self._labels = {}
+
+    def _file(self, path, name):
+        got = self._files.get(path)
+        if got is None:
+            got = self._files[path] = (len(self._files) + 1, name)
+        return got[0], (None if name == got[1] else name)
+
+    def _action(self, action):
+        got = self._actions.get(action)
+        if got is None:
+            got = self._actions[action] = len(self._actions) + 1
+        return got
+
+    def _label(self, label):
+        if label is None:
+            return None
+        got = self._labels.get(label)
+        if got is None:
+            got = self._labels[label] = len(self._labels) + 1
+        return got
 
     def add_events(self, events, ev=None, exhibit=None, part=None, tags=None,
                    partial=False):
+        xid = self._label(exhibit)
         for e in events:
             m = int(e["sort"] // 60)
             got = self._minutes.get(m)
@@ -281,21 +340,26 @@ class Writer:
             got[0] += 1
             if e["flagged"]:
                 got[1] += 1
+            pf, name = self._file(e["path"] or "", e["name"])
             self._pending.append((
-                e["sort"], e["time"], e["action"], e["source"], e["name"],
-                e["path"] or "", int(e["is_dir"]), int(e["deleted"]),
+                e["sort"], e["time"], self._action(e["action"]),
+                self._label(e["source"]), pf, name,
+                int(e["is_dir"]), int(e["deleted"]),
                 e["size"], None if e["node"] is None else str(e["node"]),
-                e["offset"], int(e["flagged"]), ev, exhibit, part, tags,
+                e["offset"], int(e["flagged"]), ev, xid, part, tags,
                 int(bool(partial))))
         self.count += len(events)
         if len(self._pending) >= BATCH:
             self._flush()
 
     def add_flag(self, flag, ev=None, part=None):
+        pf, name = self._file(flag["path"] or "", flag["name"])
         self.db.execute(
-            "INSERT INTO flags VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO s_fl (ev,part,node,pf,name,offset,observations,"
+            "created,fn_created,modified,fn_modified) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (ev, part, None if flag["node"] is None else str(flag["node"]),
-             flag["path"], flag["name"], flag["offset"],
+             pf, name, flag["offset"],
              json.dumps(flag["observations"]), flag["created"],
              flag["fn_created"], flag["modified"], flag["fn_modified"]))
         self.flags += 1
@@ -307,18 +371,60 @@ class Writer:
 
     def finish(self, summary):
         self._flush()
+        paths = sorted(self._files)
+        actions = sorted(self._actions)
+        # Provisional number -> final number, kept beside the staged rows so
+        # the renumbering is a join rather than a pass through Python.
+        self.db.execute("CREATE TABLE pmap (prov INTEGER PRIMARY KEY, "
+                        "fid INTEGER NOT NULL)")
+        self.db.executemany("INSERT INTO pmap VALUES (?,?)",
+                            ((self._files[p][0], i + 1)
+                             for i, p in enumerate(paths)))
+        self.db.execute("CREATE TABLE amap (prov INTEGER PRIMARY KEY, "
+                        "aid INTEGER NOT NULL)")
+        self.db.executemany("INSERT INTO amap VALUES (?,?)",
+                            ((self._actions[a], i + 1)
+                             for i, a in enumerate(actions)))
+        self.db.commit()
+        self.db.close()
+
+        self.db = sqlite3.connect(self.part)
+        self.db.execute("PRAGMA journal_mode=OFF")
+        self.db.execute("PRAGMA synchronous=OFF")
+        self.db.executescript(SCHEMA)
+        self.db.executemany("INSERT INTO files VALUES (?,?,?)",
+                            ((i + 1, p, self._files[p][1])
+                             for i, p in enumerate(paths)))
+        self.db.executemany("INSERT INTO actions VALUES (?,?)",
+                            ((i + 1, a) for i, a in enumerate(actions)))
+        self.db.executemany("INSERT INTO labels VALUES (?,?)",
+                            ((i, l) for l, i in self._labels.items()))
+        self.db.execute("ATTACH DATABASE ? AS stage", (self.stage,))
         self.db.execute(
-            "CREATE INDEX events_order ON events(sort, path, action)")
-        self.db.execute("CREATE INDEX flags_item ON flags(ev, part, node)")
+            "INSERT INTO ev SELECT s.id, s.sort, s.time, a.aid, s.src, p.fid, "
+            "s.name, s.is_dir, s.deleted, s.size, s.node, s.offset, "
+            "s.flagged, s.ev, s.xid, s.part, s.tags, s.partial "
+            "FROM stage.s_ev s JOIN stage.pmap p ON p.prov = s.pf "
+            "JOIN stage.amap a ON a.prov = s.pa ORDER BY s.id")
+        self.db.execute(
+            "INSERT INTO fl SELECT s.ev, s.part, s.node, p.fid, s.name, "
+            "s.offset, s.observations, s.created, s.fn_created, s.modified, "
+            "s.fn_modified FROM stage.s_fl s "
+            "JOIN stage.pmap p ON p.prov = s.pf ORDER BY s.seq")
+        self.db.commit()
+        self.db.execute("DETACH DATABASE stage")
+        _unlink(self.stage)
+        self.db.execute("CREATE INDEX ev_order ON ev(sort, fid, aid)")
+        self.db.execute("CREATE INDEX fl_item ON fl(ev, part, node)")
         self.db.execute(_BUCKETS_TABLE % "buckets")
         self.db.executemany(
             "INSERT INTO buckets VALUES (?,?,?)",
             ((m, c[0], c[1]) for m, c in self._minutes.items()))
-        order = " ORDER BY sort %s, path %s, action %s, id %s LIMIT 1"
+        order = " ORDER BY sort %s, fid %s, aid %s, id %s LIMIT 1"
         first = self.db.execute(
-            "SELECT time FROM events" + order % (("ASC",) * 4)).fetchone()
+            "SELECT time FROM ev" + order % (("ASC",) * 4)).fetchone()
         last = self.db.execute(
-            "SELECT time FROM events" + order % (("DESC",) * 4)).fetchone()
+            "SELECT time FROM ev" + order % (("DESC",) * 4)).fetchone()
         out = dict(summary)
         out["count"] = self.count
         out["flagged"] = self.flags
@@ -336,10 +442,14 @@ class Writer:
             self.db.close()
         except Exception:
             pass
-        try:
-            os.unlink(self.part)
-        except OSError:
-            pass
+        _unlink(self.part)
+        _unlink(self.stage)
+
+def _unlink(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 def _open(path):
     if not path or not os.path.isfile(path):
@@ -361,9 +471,21 @@ def summary(path):
 
 def _row(r):
     d = dict(r)
+    d.pop("fid", None)
+    d.pop("aid", None)
     for k in ("is_dir", "deleted", "flagged", "partial"):
         d[k] = bool(d[k])
     return d
+
+def _normalised(db):
+    # A timeline written before paths were stored once keeps its events
+    # table as it was, and is read the way it always was.
+    return _has_table(db, "files")
+
+def _event_rows(db):
+    # For what needs only an event's own columns -- times, flags -- the
+    # table itself, without joining in paths it would not use.
+    return "ev" if _normalised(db) else "events"
 
 def _filters(q=None, flagged=False, start=None, end=None):
     where, args = [], []
@@ -389,11 +511,15 @@ def page(path, cursor=None, limit=400, q=None, flagged=False, start=None,
         return None
     try:
         where, args = _filters(q, flagged, start, end)
+        # fid and aid follow path and action order, so ordering by them is
+        # ordering by path and action.
+        k1, k2 = ("fid", "aid") if _normalised(db) else ("path", "action")
 
         matched = None
         if cursor is None:
             matched = db.execute(
-                "SELECT COUNT(*) FROM events"
+                "SELECT COUNT(*) FROM %s" % (_event_rows(db) if not q
+                                             else "events")
                 + (" WHERE " + " AND ".join(where) if where else ""),
                 args).fetchone()[0]
 
@@ -401,18 +527,18 @@ def page(path, cursor=None, limit=400, q=None, flagged=False, start=None,
         if cursor is not None:
             s, p, a, i = cursor
             keyed.append(
-                "(sort > ? OR (sort = ? AND (path > ? OR (path = ? AND "
-                "(action > ? OR (action = ? AND id > ?))))))")
+                "(sort > ? OR (sort = ? AND (%s > ? OR (%s = ? AND "
+                "(%s > ? OR (%s = ? AND id > ?))))))" % (k1, k1, k2, k2))
             kargs += [s, s, p, p, a, a, i]
         limit = max(1, min(int(limit), PAGE_MAX))
         rows = db.execute(
             "SELECT * FROM events"
             + (" WHERE " + " AND ".join(keyed) if keyed else "")
-            + " ORDER BY sort, path, action, id LIMIT ?",
+            + " ORDER BY sort, %s, %s, id LIMIT ?" % (k1, k2),
             kargs + [limit + 1]).fetchall()
         more = len(rows) > limit
         rows = rows[:limit]
-        nxt = ([rows[-1]["sort"], rows[-1]["path"], rows[-1]["action"],
+        nxt = ([rows[-1]["sort"], rows[-1][k1], rows[-1][k2],
                 rows[-1]["id"]] if rows else cursor)
         return {"rows": [_row(r) for r in rows], "cursor": nxt,
                 "done": not more, "matched": matched}
@@ -436,7 +562,8 @@ _minutes_cache = {}
 
 def _count_minutes(db):
     minutes = {}
-    for sort, flagged in db.execute("SELECT sort, flagged FROM events"):
+    for sort, flagged in db.execute("SELECT sort, flagged FROM %s"
+                                    % _event_rows(db)):
         m = int(sort // 60)
         got = minutes.get(m)
         if got is None:
@@ -527,6 +654,7 @@ def histogram(path, bins=300, start=None, end=None, q=None, flagged=False):
     fast = _ensure_buckets(path)
     db = _open(path)
     try:
+        rows_of = _event_rows(db)
         if not fast:
             minutes = _cached_minutes(path)
             if minutes is not None:
@@ -548,7 +676,8 @@ def histogram(path, bins=300, start=None, end=None, q=None, flagged=False):
             full_hi = float((m1 + 1) * 60)
         else:
             s0, s1, total_all = db.execute(
-                "SELECT MIN(sort), MAX(sort), COUNT(*) FROM events").fetchone()
+                "SELECT MIN(sort), MAX(sort), COUNT(*) FROM %s"
+                % rows_of).fetchone()
             if s0 is None:
                 return _empty(bins)
             full_lo = _minute(s0)
@@ -559,10 +688,12 @@ def histogram(path, bins=300, start=None, end=None, q=None, flagged=False):
             lo, hi = full_lo, full_hi
             k = int(total_all * TAIL)
             if k > 0:
-                first = db.execute("SELECT sort FROM events ORDER BY sort "
-                                   "LIMIT 1 OFFSET ?", (k,)).fetchone()
-                last = db.execute("SELECT sort FROM events ORDER BY sort DESC "
-                                  "LIMIT 1 OFFSET ?", (k,)).fetchone()
+                first = db.execute("SELECT sort FROM %s ORDER BY sort "
+                                   "LIMIT 1 OFFSET ?" % rows_of,
+                                   (k,)).fetchone()
+                last = db.execute("SELECT sort FROM %s ORDER BY sort DESC "
+                                  "LIMIT 1 OFFSET ?" % rows_of,
+                                  (k,)).fetchone()
                 if first and last:
                     t_lo, t_hi = _minute(first[0]), _minute(last[0]) + 60
                     if t_lo < t_hi and (t_hi - t_lo) < 0.5 * (full_hi - full_lo):
@@ -604,8 +735,8 @@ def histogram(path, bins=300, start=None, end=None, q=None, flagged=False):
             where, args = _filters(None, flagged, lo, hi)
             for b, c in db.execute(
                     "SELECT " + _BAR + " AS b, COUNT(*) FROM (SELECT sort, "
-                    "CAST((sort - ?) / ? AS INTEGER) AS b0 FROM events WHERE "
-                    + " AND ".join(where) + ") GROUP BY b",
+                    "CAST((sort - ?) / ? AS INTEGER) AS b0 FROM " + rows_of
+                    + " WHERE " + " AND ".join(where) + ") GROUP BY b",
                     [lo, width, lo, width, lo, width] + args):
                 counts[max(0, min(int(b), n - 1))] += c
             edge_lo, edge_hi = _minute(lo), _minute(hi)
@@ -616,14 +747,14 @@ def histogram(path, bins=300, start=None, end=None, q=None, flagged=False):
                                  "WHERE m < ?" % col,
                                  (int(edge_lo // 60),)
                                  ).fetchone()[0]
-                      + db.execute("SELECT COUNT(*) FROM events WHERE "
+                      + db.execute("SELECT COUNT(*) FROM " + rows_of + " WHERE "
                                    + " AND ".join(w), a).fetchone()[0])
             w, a = _filters(None, flagged, hi, edge_hi)
             after = (db.execute("SELECT COALESCE(SUM(%s), 0) FROM buckets "
                                 "WHERE m >= ?" % col,
                                 (int(edge_hi // 60),)
                                 ).fetchone()[0]
-                     + db.execute("SELECT COUNT(*) FROM events WHERE "
+                     + db.execute("SELECT COUNT(*) FROM " + rows_of + " WHERE "
                                   + " AND ".join(w), a).fetchone()[0])
         else:
             by = "event"
@@ -632,8 +763,8 @@ def histogram(path, bins=300, start=None, end=None, q=None, flagged=False):
             for b, c in db.execute(
                     "SELECT CASE WHEN sort < ? THEN -1 WHEN sort >= ? THEN -2 "
                     "ELSE " + _BAR + " END AS b, COUNT(*) FROM (SELECT sort, "
-                    "CAST((sort - ?) / ? AS INTEGER) AS b0 FROM events"
-                    + clause + ") GROUP BY b",
+                    "CAST((sort - ?) / ? AS INTEGER) AS b0 FROM "
+                    + ("events" if q else rows_of) + clause + ") GROUP BY b",
                     [lo, hi, lo, width, lo, width, lo, width] + args):
                 b = int(b)
                 if b == -1:

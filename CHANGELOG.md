@@ -50,6 +50,12 @@ records, not how the code changed.
   function: inflate". Nothing is damaged by trying. To go back to an earlier
   version, delete `cache/content-index.sqlite` in the case folder and build
   the index again there — it is derived entirely from the evidence.
+- **Timelines take much less disk space.** A timeline stored every file's
+  full path and name again on each of its events, and once more in its sort
+  index; each is now stored once per file. The timeline shows the same
+  events in the same order, and pages and filters at least as quickly. A
+  timeline built by an earlier version is still read as it is, and takes
+  the smaller form when it is next rebuilt.
 - **A full index keeps at most 8 MB of text from any one file.** Every byte is
   still read, but program binaries, browser cache blocks and `$MFT` produced
   tens of megabytes of text each, and the index over that text roughly doubled its size again. Files that reach the limit
