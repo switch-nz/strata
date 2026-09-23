@@ -45,7 +45,11 @@ records, not how the code changed.
   search, now instant). A snippet shows the passage around the first occurrence of a
   term; before, it could be a later passage FTS5 scored higher. An existing
   index is converted when its case is opened, and stays searchable until it
-  is.
+  is. Once converted, an earlier version of Strata cannot use the index: it
+  reports that there is no index, and building one fails with "no such
+  function: inflate". Nothing is damaged by trying. To go back to an earlier
+  version, delete `cache/content-index.sqlite` in the case folder and build
+  the index again there — it is derived entirely from the evidence.
 - **A full index keeps at most 8 MB of text from any one file.** Every byte is
   still read, but program binaries, browser cache blocks and `$MFT` produced
   tens of megabytes of text each, and the index over that text roughly doubled its size again. Files that reach the limit
