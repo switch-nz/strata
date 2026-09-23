@@ -11,6 +11,14 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-23
+
+A feature release: a read-only mode for exports and reports, fixed VHD
+image support, Apple extended-attribute decoding on APFS and HFS+, ATT&CK
+technique attribution for artefact rows, a confirmation before re-running
+an artefact collector, and fragmented-file carving across a single gap.
+Upgrade from 0.2.0.
+
 ### Added
 
 - **A `--read-only` startup flag refuses export and report writing for the
@@ -495,7 +503,8 @@ Corroborate results in these areas with another tool before relying on them.
   ([#15](https://github.com/switch-nz/strata/issues/15),
   [#19](https://github.com/switch-nz/strata/issues/19)).
 
-[Unreleased]: https://github.com/switch-nz/strata/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/switch-nz/strata/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/switch-nz/strata/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/switch-nz/strata/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/switch-nz/strata/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/switch-nz/strata/compare/v0.1.0...v0.1.1
