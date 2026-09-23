@@ -3261,15 +3261,36 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/unlock":
             part = int(body.get("part") or 0)
             secret = body.get("secret") or ""
+            keyfile_path = body.get("keyfile") or ""
             v = s.vault(part)
             if v is None:
                 return self._send(400, {
                     "error": _t("server.unlock.partition_encrypted_volume_tool")})
-            if not secret:
+
+            is_bde = isinstance(v, bitlocker_mod.BitLocker)
+            bek_key = None
+            if keyfile_path:
+                if not is_bde:
+                    return self._send(400, {
+                        "error": _t("server.unlock.startup_key_file_only")})
+                try:
+                    with open(keyfile_path, "rb") as fh:
+                        bek_data = fh.read(4096)
+                except OSError as exc:
+                    return self._send(400, {"error": str(exc)})
+                bek_key = bitlocker_mod.parse_bek_file(bek_data)
+                if bek_key is None:
+                    return self._send(400, {
+                        "error": _t("server.unlock.not_a_valid_bek_file")})
+
+            has_free = is_bde and any(
+                p.usable and p.kind == "none" for p in v.protectors)
+            if not secret and not bek_key and not has_free:
                 return self._send(400, {"error": _t("server.unlock.enter_password_key")})
 
             def run(progress):
-                r = v.unlock(secret, progress=progress)
+                kwargs = {"bek_key": bek_key} if is_bde else {}
+                r = v.unlock(secret, progress=progress, **kwargs)
                 if r.get("unlocked"):
                     s.unlocked[part] = v
                     s.fs_cache.pop(part, None)

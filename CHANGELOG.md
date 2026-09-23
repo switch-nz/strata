@@ -11,6 +11,21 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+### Added
+
+- **A BitLocker volume with a clear-key or startup-key (.BEK) protector can
+  now be unlocked.** Both protector types were already recognised but
+  unusable: a clear-key protector — the volume left effectively
+  unprotected, usually mid-encryption or with protection suspended — could
+  never be tried because the unlock request always demanded a non-empty
+  secret first, and a startup key was matched against the wrong on-disk
+  protector-type value (`0x0002` instead of the real `0x0200`, confirmed
+  against the published BitLocker format specification and cross-checked
+  independently), so a real `.BEK`-protected volume never matched at all.
+  A clear-key volume now unlocks with one click and no secret; a
+  startup-key volume unlocks by pointing at its `.BEK` file
+  ([#53](https://github.com/switch-nz/strata/issues/53)).
+
 ## [0.3.0] - 2026-09-23
 
 A feature release: a read-only mode for exports and reports, fixed VHD

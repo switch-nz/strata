@@ -4113,18 +4113,25 @@ async function maybeUnlock(part) {
     }).join('');
 
   const canTry = !!enc.recoverable;
-  $('#unlock-field').hidden = !canTry;
+  const wantsSecret = kinds.includes('password') || kinds.includes('recovery');
+  const wantsKeyfile = kinds.includes('keyfile');
+  $('#unlock-field').hidden = !canTry || !wantsSecret;
+  $('#unlock-keyfile-field').hidden = !canTry || !wantsKeyfile;
   $('#unlock-go').hidden = !canTry;
   $('#unlock-label').textContent = kinds.includes('recovery')
     ? (kinds.includes('password') ? txt('ui.unlock.unlock_label') : txt('ui.recovery_key'))
     : 'Password';
   $('#unlock-cancel').textContent = canTry ? 'Not now' : 'Close';
+  // A clear-key protector's own advice (info()'s findings, via _advice())
+  // already says no secret is needed whenever one is present, so there is
+  // no separate client-side case to cover here.
   $('#unlock-note').textContent = (enc.findings || []).join(' ')
     || (canTry ? txt('help.key_held_session_only_never_written_case') : '');
   $('#unlock-error').hidden = true;
   $('#unlock-secret').value = '';
   $('#unlock-secret').type = 'password';
   $('#unlock-show').checked = false;
+  $('#unlock-keyfile').value = '';
 
   previewNone(canTry
     ? txt('help.volume_encrypted_unlock_list_contents')
@@ -4132,15 +4139,15 @@ async function maybeUnlock(part) {
 
   dlg.returnValue = '';
   dlg.showModal();
-  if (canTry) setTimeout(() => $('#unlock-secret').focus(), 30);
+  if (canTry && wantsSecret) setTimeout(() => $('#unlock-secret').focus(), 30);
 
   return await new Promise(resolve => {
     const done = async () => {
       dlg.removeEventListener('close', done);
       if (dlg.returnValue !== 'ok') return resolve(true);
       const secret = $('#unlock-secret').value;
-      if (!secret) return resolve(true);
-      const t = await api.post('unlock', { part: part.offset, secret });
+      const keyfile = $('#unlock-keyfile').value.trim();
+      const t = await api.post('unlock', { part: part.offset, secret, keyfile });
       const r = await awaitTask(t, 'Unlocking', {
         modal: { title: txt('ui.unlocking_volume'),
                  detail: txt('help.deriving_key_entered_format_specifies_about_million') },
@@ -4162,7 +4169,7 @@ async function maybeUnlock(part) {
       $('#unlock-secret').value = '';
       dlg.returnValue = '';
       dlg.showModal();
-      setTimeout(() => $('#unlock-secret').focus(), 30);
+      if (wantsSecret) setTimeout(() => $('#unlock-secret').focus(), 30);
     };
     dlg.addEventListener('close', done);
   });

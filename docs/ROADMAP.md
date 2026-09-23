@@ -59,9 +59,12 @@ recognised and refused by name today; these entries are about *reading* it.
 
 ### Encryption
 
-- [ ] **BitLocker startup keys (`.BEK`) and clear-key volumes.** Both protector
-      types are recognised, but unlocking only accepts a password or a
-      recovery key, so neither can be used yet.
+- [ ] **BitLocker startup keys (`.BEK`) and clear-key volumes** — implemented
+      and verified against synthetic FVE volumes built to the published
+      format spec (including cross-checking the protector-type values
+      against an independent tool); a real `.BEK` file and a real
+      clear-key volume from actual Windows-run BitLocker still need to be
+      confirmed before this can be called done.
 - [ ] **BitLocker with the Elephant diffuser** — Vista and Windows 7 volumes
       are identified and refused rather than decrypted wrongly.
 - [ ] **LUKS2 with Argon2 against real cryptsetup images** — implemented and

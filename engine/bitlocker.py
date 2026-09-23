@@ -24,21 +24,23 @@ ENCRYPTION_METHODS = {
 }
 
 PROTECTOR_TYPES = {
+    # Numeric values verified against the libyal/libbde format specification
+    # and cross-checked against bitlocker2john.c -- both agree TPM and
+    # Startup key sit in the high byte (0x0100/0x0200), not 0x0001/0x0002 as
+    # this dict originally had it, which meant a real .BEK-protected volume
+    # never actually matched the "keyfile" entry below.
     0x0000: ("Clear key", "none",
              "The volume is not really protected — the key is stored beside "
              "it in the clear. This is what a volume looks like mid-encryption "
              "or with protection suspended."),
-    0x0001: ("TPM", "tpm",
+    0x0100: ("TPM", "tpm",
              "Sealed to the machine's TPM. It cannot be unlocked from an "
              "image; the chip is the secret and it did not come with the disk."),
-    0x0002: ("Startup key", "keyfile",
+    0x0200: ("Startup key", "keyfile",
              "Requires the .BEK startup key file, normally on a USB stick."),
-    0x0003: ("TPM and PIN", "tpm",
+    0x0500: ("TPM and PIN", "tpm",
              "Sealed to the TPM and additionally gated by a PIN. Not "
              "recoverable from an image alone."),
-    0x0004: ("TPM and startup key", "tpm", "Not recoverable from an image alone."),
-    0x0005: ("TPM, PIN and startup key", "tpm",
-             "Not recoverable from an image alone."),
     0x0800: ("Recovery password", "recovery",
              "The 48-digit recovery key, in eight groups of six."),
     0x1000: ("Auto-unlock", "keyfile",
@@ -51,10 +53,12 @@ ENTRY_VMK = 0x0002
 ENTRY_FVEK = 0x0003
 ENTRY_DESCRIPTION = 0x0007
 ENTRY_VOLUME_HEADER = 0x000F
+VALUE_KEY = 0x0001
 VALUE_UNICODE = 0x0002
 VALUE_STRETCH_KEY = 0x0003
 VALUE_AES_CCM = 0x0005
 VALUE_VMK = 0x0008
+VALUE_EXTERNAL_KEY = 0x0009
 VALUE_OFFSET_SIZE = 0x000F
 
 class Unsupported(Exception):
@@ -109,6 +113,26 @@ def _ccm_open(key, blob):
         raise Unsupported(_t("bitlocker.unwrapped_key_entry_too"))
     size, etype, vtype, version = struct.unpack_from("<HHHH", plain, 0)
     return plain[12:size] if 12 < size <= len(plain) else plain[12:]
+
+def parse_bek_file(data):
+    """The raw 256-bit key out of a .BEK startup-key file: a 48-byte header
+    (the same shape as the volume's own FVE metadata header) followed by one
+    External Key (0x0009) entry -- a key identifier GUID, a last-modified
+    FILETIME, then properties holding an optional description and a Key
+    (0x0001) entry, which is a 4-byte encryption-method field followed by
+    the raw key bytes themselves. Returns None for anything that doesn't
+    match that shape, rather than guessing."""
+    if len(data) < 48:
+        return None
+    meta_size = struct.unpack_from("<I", data, 0)[0]
+    end = min(meta_size, len(data)) if meta_size >= 48 else len(data)
+    for e in _entries(data, 48, end):
+        if e["value_type"] != VALUE_EXTERNAL_KEY or len(e["data"]) < 24:
+            continue
+        for prop in _entries(e["data"], 24, len(e["data"])):
+            if prop["value_type"] == VALUE_KEY and len(prop["data"]) > 4:
+                return prop["data"][4:]
+    return None
 
 def _is_recovery_format(s):
     digits = "".join(c for c in s if c.isdigit())
@@ -294,30 +318,36 @@ class BitLocker:
     def unlocked(self):
         return self.fvek is not None
 
-    def unlock(self, secret, kind=None, progress=None):
+    def unlock(self, secret, kind=None, progress=None, bek_key=None):
         if not self.valid:
             return {"unlocked": False, "reason": _t("bitlocker.usable_bitlocker_metadata")}
         if self.mode is None:
             return {"unlocked": False,
                     "reason": _t("bitlocker.encryption_method_x_x") % self.method}
         secret = (secret or "").strip()
-        if not secret:
+        has_free = any(p.usable and p.kind == "none" for p in self.protectors)
+        if not secret and not bek_key and not has_free:
             return {"unlocked": False, "reason": _t("bitlocker.password_key_supplied")}
 
-        looks_recovery = _is_recovery_format(secret)
+        looks_recovery = _is_recovery_format(secret) if secret else False
         tried = []
         for p in self.protectors:
             if not p.usable or p.kind == "tpm":
                 continue
             if kind and p.kind != kind:
                 continue
-            if p.kind == "recovery" and not looks_recovery:
-                continue
-            if p.kind == "password" and looks_recovery:
-                continue
+            if p.kind == "recovery":
+                if not secret or not looks_recovery:
+                    continue
+            elif p.kind == "password":
+                if not secret or looks_recovery:
+                    continue
+            elif p.kind == "keyfile":
+                if not bek_key:
+                    continue
             tried.append(p.name)
             try:
-                vmk = self._unwrap_vmk(p, secret, progress)
+                vmk = self._unwrap_vmk(p, secret, progress, bek_key=bek_key)
             except ccm.MacMismatch:
                 continue
             except Exception as exc:
@@ -348,7 +378,10 @@ class BitLocker:
         return {"unlocked": False,
                 "reason": _t("bitlocker.incorrect") % (" or ".join(tried).lower())}
 
-    def _unwrap_vmk(self, protector, secret, progress=None):
+    def _unwrap_vmk(self, protector, secret, progress=None, bek_key=None):
+        if protector.kind == "none":
+            return self._unwrap_clear_vmk(protector)
+
         salt = None
         outer, nested = [], []
         for e in protector.entries:
@@ -368,6 +401,10 @@ class BitLocker:
             if digits is None:
                 return None
             initial = hashlib.sha256(digits).digest()
+        elif protector.kind == "keyfile":
+            if not bek_key:
+                return None
+            initial = bek_key
         else:
             initial = hashlib.sha256(
                 hashlib.sha256(secret.encode("utf-16-le")).digest()).digest()
@@ -376,6 +413,30 @@ class BitLocker:
         for blob in candidates:
             try:
                 return _ccm_open(key, blob)
+            except ccm.MacMismatch:
+                continue
+            except Unsupported:
+                continue
+        return None
+
+    @staticmethod
+    def _unwrap_clear_vmk(protector):
+        """A clear-key protector's own entries hold the unwrapping key
+        directly (a Key (0x0001) entry -- a 4-byte encryption-method field
+        then the raw key) alongside the AES-CCM-wrapped VMK; unlike every
+        other protector kind, there's no stretch key or salt at all."""
+        raw_key = None
+        candidates = []
+        for e in protector.entries:
+            if e["value_type"] == VALUE_KEY and len(e["data"]) > 4:
+                raw_key = e["data"][4:]
+            elif e["value_type"] == VALUE_AES_CCM:
+                candidates.append(e["data"])
+        if raw_key is None or not candidates:
+            return None
+        for blob in candidates:
+            try:
+                return _ccm_open(raw_key, blob)
             except ccm.MacMismatch:
                 continue
             except Unsupported:

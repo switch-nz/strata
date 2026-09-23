@@ -52,6 +52,7 @@
   "tree.terms_comma_separated": "Terms, comma separated",
   "triage.modules": "Modules",
   "tz.custom_tag": "Custom tag",
+  "unlock.bek_path": "/path/to/key.BEK",
   "viewer.hide": "Give the panel back to the list. Anything that points at bytes brings them back.",
   "who.password_48_digits_eight_groups": "password, or 48 digits in eight groups"
 }

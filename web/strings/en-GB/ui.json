@@ -860,6 +860,7 @@
   "unattributed": "unattributed",
   "unidentified_profile": "Unidentified profile",
   "unlock.show_what_i_typed": "Show what I typed",
+  "unlock.startup_key_path": "Startup key (.BEK) file",
   "unlock.unlock_cancel": "Not now",
   "unlock.unlock_go": "Unlock",
   "unlock.unlock_label": "Password or recovery key",
