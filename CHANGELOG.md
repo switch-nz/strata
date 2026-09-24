@@ -11,6 +11,18 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-24
+
+A feature release: split raw sets from FTK Imager, Guymager and `split`
+open as one exhibit; BitLocker volumes with a clear-key or startup-key
+protector unlock; and case folders are much smaller and indexed search much
+faster, with a compressed content index, timelines that store each path
+once, and a text extractor that finds UTF-16 text in any script without
+indexing binary as text. Upgrade from 0.3.0. An existing content index is
+converted when its case is opened, after which earlier versions cannot use
+it; rebuild the index and timeline to get the new extractor and the smaller
+timeline.
+
 ### Added
 
 - **Split raw sets written by FTK Imager, Guymager and `dd` with `split`
@@ -53,8 +65,9 @@ records, not how the code changed.
   whole of every matching document was re-read — a search whose hits include
   large files goes from tens of seconds to a few — and because counting what
   is indexed no longer reads every document (seconds, twice before every
-  search, now instant). A snippet shows the passage around the first occurrence of a
-  term; before, it could be a later passage FTS5 scored higher. An existing
+  search, now instant). A snippet shows the passage around the first
+  occurrence of a term; before, it could be a later passage FTS5 scored
+  higher. An existing
   index is converted when its case is opened, and stays searchable until it
   is. Once converted, an earlier version of Strata cannot use the index: it
   reports that there is no index, and building one fails with "no such
@@ -83,8 +96,9 @@ records, not how the code changed.
   An index built before this keeps its text until it is rebuilt.
 - **A full index keeps at most 8 MB of text from any one file.** Every byte is
   still read, but program binaries, browser cache blocks and `$MFT` produced
-  tens of megabytes of text each, and the index over that text roughly doubled its size again. Files that reach the limit
-  are counted and named as a finding, so what is not searchable is stated.
+  tens of megabytes of text each, and the index over that text roughly
+  doubled its size again. Files that reach the limit are counted and named
+  as a finding, so what is not searchable is stated.
 
 ### Fixed
 
@@ -92,9 +106,9 @@ records, not how the code changed.
   before the index lived in the cache folder were meant to move it there when
   opened, but the request never reached the engine, so the whole index
   stayed inside `case.sqlite` and every rebuild added to it, taking the case
-  record to many gigabytes. When the
-  disk has no room for the move it is now deferred and recorded in the audit
-  log, and a move that fails part way is recorded rather than dropped.
+  record to many gigabytes. When the disk has no room for the move it is now
+  deferred and recorded in the audit log, and a move that fails part way is
+  recorded rather than dropped.
 - **Removing an exhibit no longer leaves its timeline behind.** On Windows a
   timeline that was briefly open could not be deleted and was silently kept;
   deletion now retries, and opening a case removes derived files (timelines,
@@ -594,7 +608,8 @@ Corroborate results in these areas with another tool before relying on them.
   ([#15](https://github.com/switch-nz/strata/issues/15),
   [#19](https://github.com/switch-nz/strata/issues/19)).
 
-[Unreleased]: https://github.com/switch-nz/strata/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/switch-nz/strata/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/switch-nz/strata/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/switch-nz/strata/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/switch-nz/strata/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/switch-nz/strata/compare/v0.1.1...v0.1.2
