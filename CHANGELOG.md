@@ -56,6 +56,20 @@ records, not how the code changed.
   events in the same order, and pages and filters at least as quickly. A
   timeline built by an earlier version is still read as it is, and takes
   the smaller form when it is next rebuilt.
+- **Indexed text in scripts other than Latin is found more reliably, and
+  binary noise no longer fills the index.** Text stored as UTF-16 is now
+  found wherever it starts — before, a string beginning on an odd byte was
+  missed entirely — in any script, including Chinese, Japanese, Korean,
+  Cyrillic, Greek, Arabic, Hebrew, Devanagari and Thai. At the same time the
+  extractor no longer keeps the plausible-looking characters that binary
+  data, and text read one byte out of step, decode to: most of the non-Latin
+  text in an index built before this was of that kind. ASCII text is found
+  exactly as before. What is not caught is a random run of Chinese
+  characters or Hangul, which cannot be told from real text without knowing
+  which characters are common. Extracting text from a file takes a little
+  longer, since it is read at both byte alignments, but with far less text
+  to index, building an index is faster overall and the index is smaller.
+  An index built before this keeps its text until it is rebuilt.
 - **A full index keeps at most 8 MB of text from any one file.** Every byte is
   still read, but program binaries, browser cache blocks and `$MFT` produced
   tens of megabytes of text each, and the index over that text roughly doubled its size again. Files that reach the limit

@@ -1,5 +1,7 @@
 import codecs
 import re
+import threading
+import unicodedata
 import zlib
 
 from . import filesearch
@@ -54,46 +56,170 @@ def extract_text(data, limit=MAX_TEXT_PER_FILE, min_run=MIN_RUN,
                  wide_ascii_only=False):
     out = []
     total = 0
-
-    run = bytearray()
-    for b in data:
-        if 32 <= b < 127:
-            run.append(b)
-            continue
-        if len(run.strip()) >= min_run:
-            out.append(run.decode("ascii"))
-            total += len(run)
-            if total >= limit:
-                return _WS.sub(" ", " ".join(out)).strip()[:limit]
-        run = bytearray()
-    if len(run.strip()) >= min_run:
-        out.append(run.decode("ascii"))
+    for run in _ascii_runs(data, min_run):
+        out.append(run)
         total += len(run)
-
-    if total < limit:
-        try:
-            wide = data.decode("utf-16-le", "ignore")
-        except Exception:
-            wide = ""
-        run = []
-        for ch in wide:
-            ok = (" " <= ch <= "~") if wide_ascii_only else (
-                ch == " " or (ch.isprintable() and not ch.isspace()))
-            if ok:
-                run.append(ch)
-                continue
-            s = "".join(run).strip()
-            if len(s) >= min_run:
-                out.append(s)
-                total += len(s)
-                if total >= limit:
-                    break
-            run = []
-        s = "".join(run).strip()
-        if len(s) >= min_run:
-            out.append(s)
-
+        if total >= limit:
+            return _WS.sub(" ", " ".join(out)).strip()[:limit]
+    for run in _wide_runs(data, min_run, wide_ascii_only):
+        out.append(run)
+        total += len(run)
+        if total >= limit:
+            break
     return _WS.sub(" ", " ".join(out)).strip()[:limit]
+
+# Text stored as UTF-16
+#
+# Any two bytes decode as some UTF-16 character, most of them printable, so
+# keeping every printable run filled the index with text that never existed:
+# binary, and text read one byte out of step, decode to plausible-looking
+# ideographs and syllables. The data is decoded at both byte alignments -- a
+# string can start on an odd byte -- and split wherever the script changes,
+# and a run in another script is kept only when it reads like text: long
+# enough, mostly unaccented if Latin, and for ideographs and Hangul not one of
+# the patterns binary and misaligned text leave. ASCII stored as UTF-16 is
+# kept as it always was, whatever surrounds it.
+
+_WIDE_ASCII = {}
+_ASCII_RE = {}
+_CLASSES = None
+_CLASSES_LOCK = threading.Lock()
+_EAST_ASIAN = frozenset(("CJK", "HIRAGANA", "KATAKANA", "BOPOMOFO",
+                         "IDEOGRAPHIC", "HALFWIDTH"))
+# A run: one script, with spaces, digits, punctuation and combining marks
+# inside it. Plain ASCII is left to its own pass, so a Latin run is only
+# looked for where an accented letter sits against another letter -- binary
+# is full of lone ones -- and is widened afterwards to take in the
+# unaccented letters before it. For any other script the pattern asks for
+# four of its letters, so what cannot be kept is never returned.
+_SCRIPT_RUN = re.compile(r"(?:(?<=a)l|l(?=[al]))[ald.m]*"
+                         r"|([^ald.mz#])(?=(?:[.dmz]*\1){3})(?:\1|[.dmz])*")
+
+def _ascii_runs(data, min_run):
+    pattern = _ASCII_RE.get(min_run)
+    if pattern is None:
+        pattern = _ASCII_RE[min_run] = re.compile(
+            rb"[\x20-\x7e]{%d,}" % min_run)
+    for m in pattern.finditer(data):
+        run = m.group().decode("ascii")
+        if len(run.strip()) >= min_run:
+            yield run
+
+def _big(cp):
+    return 0x3400 <= cp <= 0x9FFF or 0xAC00 <= cp <= 0xD7A3
+
+def _class_of(cp, scripts):
+    # One letter per character: "a" ASCII letter, "d" other printable ASCII,
+    # "m" combining mark, "." space, digit or punctuation from elsewhere,
+    # "z" (below), "l" accented Latin, "E" East Asian, "K" Hangul, a letter
+    # of its own for each other script, "#" anything that ends a run.
+    if 0xD800 <= cp <= 0xDFFF or cp == 0xFFFD:
+        return "#"
+    if cp & 0xFF == 0 and 0x20 <= cp >> 8 <= 0x7E:
+        # UTF-16 ASCII read one byte out of step decodes to nothing but
+        # these ("o" then a zero byte is U+6F00). They may sit inside a run
+        # of real text -- U+4E00 is the character for "one" -- but cannot
+        # start one, so a stretch made only of them is never considered.
+        return "z"
+    ch = chr(cp)
+    if 0x21 <= cp <= 0x7E:
+        return "a" if ch.isalpha() else "d"
+    cat = unicodedata.category(ch)
+    if cat[0] == "M":
+        # Devanagari and Thai vowels among them; they belong to the run.
+        return "m"
+    if ch.isspace() or cat[0] in "PNZ" or cat in ("Sm", "Sc", "Sk"):
+        return "." if (ch == " " or ch.isprintable()) else "#"
+    if not ch.isprintable() or cat[0] == "C" or cat == "So":
+        return "#"
+    word = unicodedata.name(ch, "?").split(" ")[0]
+    if word in _EAST_ASIAN:
+        return "E"
+    if word == "HANGUL":
+        return "K"
+    if word == "LATIN":
+        return "l"
+    got = scripts.get(word)
+    if got is None:
+        got = scripts[word] = chr(0x100 + len(scripts))
+    return got
+
+def _classes():
+    # Built on first use rather than at import: a pass over every BMP
+    # character, as translate tables so a whole string is classified, and
+    # a run judged, at C speed.
+    global _CLASSES
+    with _CLASSES_LOCK:
+        if _CLASSES is None:
+            scripts = {}
+            cls, facts = {}, {}
+            for cp in range(0x10000):
+                cls[cp] = _class_of(cp, scripts)
+                if _big(cp):
+                    # Three characters per ideograph or syllable: its high
+                    # byte, its low byte, and whether both are printable
+                    # ASCII. Anything else translates to nothing.
+                    hi, lo = cp >> 8, cp & 0xFF
+                    both = 0x20 <= lo <= 0x7E and 0x20 <= hi <= 0x7E
+                    facts[cp] = (chr(0x100 + hi) + chr(0x100 + lo)
+                                 + ("1" if both else "0"))
+                else:
+                    facts[cp] = None
+            _CLASSES = (str.maketrans(cls), str.maketrans(facts))
+        return _CLASSES
+
+def _crowded(s):
+    # Three in four sharing one value.
+    return len(s) >= 4 and max(map(s.count, set(s))) >= 0.75 * len(s)
+
+def _reads_as_text(text, cls, min_run, facts_t):
+    kind = cls[0]
+    if kind in "ald":
+        n = len(cls) - cls.count(".") - cls.count("m") - cls.count("z")
+        latin = cls.count("l")
+        # Real Latin text is mostly unaccented letters.
+        return n >= min_run and latin <= n - latin
+    if cls.count(kind) < min_run:
+        return False
+    if kind not in "EK":
+        return True
+    facts = text.translate(facts_t)
+    n = len(facts) // 3
+    if n < 4:
+        return True
+    # ASCII read one byte out of step: both bytes printable.
+    if facts[2::3].count("1") >= 0.6 * n:
+        return False
+    # Repeated binary, or UTF-16 text read out of step: nearly every
+    # ideograph or syllable sharing a byte. Kana are left out of this --
+    # they fit in one 256-character block, so real Japanese shares a high
+    # byte too.
+    return not (_crowded(facts[0::3]) or _crowded(facts[1::3]))
+
+def _wide_runs(data, min_run, ascii_only=False):
+    pattern = _WIDE_ASCII.get(min_run)
+    if pattern is None:
+        pattern = _WIDE_ASCII[min_run] = re.compile(
+            r"[\x20-\x7e]{%d,}" % min_run)
+    tables = None if ascii_only else _classes()
+    for align in (0, 1):
+        body = data[align:]
+        text = body[:len(body) & ~1].decode("utf-16-le", "replace")
+        for m in pattern.finditer(text):
+            run = m.group().strip()
+            if len(run) >= min_run:
+                yield run
+        if tables is None:
+            continue
+        cls = text.translate(tables[0])
+        for m in _SCRIPT_RUN.finditer(cls):
+            a, b = m.span()
+            if cls[a] == "l":
+                # Take in the unaccented letters of the word it starts in.
+                while a and cls[a - 1] == "a":
+                    a -= 1
+            if _reads_as_text(text[a:b], cls[a:b], min_run, tables[1]):
+                yield text[a:b].strip()
 
 RAW_CHUNK = 64 << 10
 
