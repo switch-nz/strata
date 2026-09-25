@@ -59,8 +59,8 @@ recognised and refused by name today; these entries are about *reading* it.
 
 - [ ] **HFS** (the original, not HFS+), `com.apple.decmpfs` compressed files,
       and hard links through the private metadata directory.
-- [ ] **APFS snapshots** — the superblock's snapshot metadata is located but
-      snapshots are not listed or read.
+- [~] **APFS snapshots** — snapshots are listed and can be opened as a
+      read-only view of the volume. Tested on synthetic images only so far.
 
 ### Encryption
 
@@ -85,14 +85,18 @@ recognised and refused by name today; these entries are about *reading* it.
 - [ ] **`$LogFile`** — the log NTFS keeps for crash recovery. A different
       structure from `$UsnJrnl` and a much shorter window, but it records the
       operations rather than a summary per file.
-- [ ] **Browser disk cache** — the on-disk cache format, separate from the
-      history databases already read.
+- [~] **Browser disk cache** — Chromium Simple Cache and Firefox cache2
+      entries are read (URL, status, content type, times, fetch count),
+      separate from the history databases. The Chromium blockfile cache and
+      index are recognised and counted, not parsed. Tested on synthetic
+      entries only so far.
 - [ ] **Event ID descriptions**, and timelining across logs.
 - [ ] **PST:** ANSI (32-bit) files are refused today; OST-specific
       structures are not handled.
-- [ ] **Legacy Office body text** — Word's piece table, Excel's BIFF stream,
-      PowerPoint's records. Properties are read; the body is deliberately left
-      unread rather than guessed at.
+- [~] **Legacy Office body text** — Word's piece table, Excel's BIFF stream
+      and PowerPoint's records are decoded, and whatever cannot be proven from
+      the file is a finding rather than a guess. Tested on synthetic files
+      only so far.
 
 ---
 
@@ -172,7 +176,7 @@ Agreeing with another tool is agreement, not verification.
 
 - [ ] Configurable columns in the folder view, and the filter controls search
       already has (both can share `filesearch.matches_filters`).
-- [ ] Read-only mode that refuses export and report writing.
+- [x] Read-only mode that refuses export and report writing.
 - [ ] Template editor, so an examiner can define a structure without Python.
       The templates in `engine/structure.py` are already declarative enough to
       make this mostly an interface problem.
@@ -186,9 +190,10 @@ Agreeing with another tool is agreement, not verification.
 
 ## Performance and debt
 
-- [ ] Tagged items are keyed on the filesystem handle (MFT record / inode):
-      stable within an image, but a tag will not follow the same volume
-      re-acquired into another image.
+- [x] Tagged items are keyed on the filesystem handle (MFT record / inode),
+      which is stable only within an image; tags now follow the same volume
+      re-acquired into another image, matched on the filesystem's own
+      identifier.
 
 ---
 

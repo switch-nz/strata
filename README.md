@@ -151,8 +151,7 @@ separate from the tool's suggestions, and never promotes one to the other.
 ## Not implemented
 
 EWF v2 (Ex01), FileVault, BitLocker with the Elephant diffuser, ANSI PST,
-`$LogFile`, and carving across fragments. Shadow copies are listed but
-cannot yet be opened.
+`$LogFile`, and carving across fragments.
 
 ---
 

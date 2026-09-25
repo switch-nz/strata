@@ -11,8 +11,29 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-25
+
+A feature release: shadow copies and APFS snapshots can be opened and
+browsed, two volumes (or a volume and one of its snapshots) can be diffed
+per path, tags follow a volume re-acquired into another image, the body
+text of legacy Word, Excel and PowerPoint files is read, and browser disk
+caches are read alongside browser history. Upgrade from 0.4.0. A Browser
+result saved by an earlier version is marked stale until it is run again,
+since it has no cache entries; nothing else in an existing case needs
+redoing, and an earlier version can still open a case this one has used.
+
 ### Added
 
+- **Volume Shadow Copies can now be opened, not just listed.** Where an
+  exhibit holds shadow copies, Strata shows each snapshot in the Shadow
+  Copies pane with an Open button; opening one browses that snapshot's
+  files and folders as a filesystem in its own right, reading through the
+  block-redirect overlay to the differential store where a changed block
+  was copied and falling through to the base volume where it was not.
+  Hex, preview, export and folder export all read snapshot content, and
+  the snapshot context is labelled throughout so results are never
+  confused with the live volume
+  ([#49](https://github.com/switch-nz/strata/issues/49)).
 - **APFS snapshots can be listed and opened read-only.** On an APFS volume
   that has snapshots, a Snapshots list now shows each snapshot's name,
   creation time and transaction identifier, and a snapshot can be opened as a
@@ -21,6 +42,14 @@ records, not how the code changed.
   were removed when the snapshot was made is reported as dataless and cannot
   be opened
   ([#51](https://github.com/switch-nz/strata/issues/51)).
+- **Two volumes can be diffed, per path.** A new Diff tab picks any two
+  loaded exhibits (or a volume and one of its own shadow-copy snapshots)
+  and lists what was added, removed and changed between them — compared
+  by path, with size and timestamps per side. Node numbers are ignored:
+  the same volume acquired twice does not report every file as changed
+  just because its MFT records moved. Snapshot reads come straight from
+  the shadow-copy store, layered over the live volume
+  ([#74](https://github.com/switch-nz/strata/issues/74)).
 - **Tags follow a volume when it is re-acquired into another image.** Tags
   are keyed to the filesystem handle of the file they name, which is stable
   only within one image, so the same volume imaged again arrived with its
@@ -30,23 +59,6 @@ records, not how the code changed.
   move to the new exhibit. A volume whose identifier matches several the
   case already holds is reported rather than guessed
   ([#82](https://github.com/switch-nz/strata/issues/82)).
-- **Browser disk caches are now read alongside browser history.** Running
-  the Browser artefact on a volume lists the cached pages, not just the
-  visited ones: each Chromium Simple Cache entry and Firefox cache2 entry
-  shows its URL, HTTP status, content type, last-modified and last-fetched
-  times and fetch count, under a Cache category for each browser profile.
-  The Chromium index and the older blockfile cache (`data_0`–`data_4`,
-  `f_XXXXXX`) are recognised and counted but not parsed, and an entry too
-  damaged to read is counted and reported rather than shown with guessed
-  values.
-- **Two volumes can be diffed, per path.** A new Diff tab picks any two
-  loaded exhibits (or a volume and one of its own shadow-copy snapshots)
-  and lists what was added, removed and changed between them — compared
-  by path, with size and timestamps per side. Node numbers are ignored:
-  the same volume acquired twice does not report every file as changed
-  just because its MFT records moved. Snapshot reads come straight from
-  the shadow-copy store, layered over the live volume
-  ([#74](https://github.com/switch-nz/strata/issues/74)).
 - **Word documents in the legacy binary .doc format now yield their body
   text instead of nothing.** A .doc is a compound file whose text lives
   in the piece table named by the File Information Block, and until now
@@ -57,7 +69,6 @@ records, not how the code changed.
   file is reported as a finding with the reason, and only text the
   format itself supports is offered
   ([#62](https://github.com/switch-nz/strata/issues/62)).
-
 - **Excel workbooks in the legacy binary .xls format now yield their body
   text instead of nothing.** An .xls is a compound file whose text lives
   in the BIFF record stream, and until now Strata offered no text from
@@ -67,7 +78,6 @@ records, not how the code changed.
   the file is reported as a finding with the reason, and only text the
   format itself supports is offered
   ([#62](https://github.com/switch-nz/strata/issues/62)).
-
 - **PowerPoint presentations in the legacy binary .ppt format now yield
   their body text instead of nothing.** A .ppt is a compound file whose
   text lives in the slide records, and until now Strata offered no text
@@ -78,6 +88,15 @@ records, not how the code changed.
   from the file is reported as a finding with the reason, and only text
   the format itself supports is offered
   ([#62](https://github.com/switch-nz/strata/issues/62)).
+- **Browser disk caches are now read alongside browser history.** Running
+  the Browser artefact on a volume lists the cached pages, not just the
+  visited ones: each Chromium Simple Cache entry and Firefox cache2 entry
+  shows its URL, HTTP status, content type, last-modified and last-fetched
+  times and fetch count, under a Cache category for each browser profile.
+  The Chromium index and the older blockfile cache (`data_0`–`data_4`,
+  `f_XXXXXX`) are recognised and counted but not parsed, and an entry too
+  damaged to read is counted and reported rather than shown with guessed
+  values.
 
 ## [0.4.0] - 2026-09-24
 
@@ -93,16 +112,6 @@ timeline.
 
 ### Added
 
-- **Volume Shadow Copies can now be opened, not just listed.** Where an
-  exhibit holds shadow copies, Strata shows each snapshot in the Shadow
-  Copies pane with an Open button; opening one browses that snapshot's
-  files and folders as a filesystem in its own right, reading through the
-  block-redirect overlay to the differential store where a changed block
-  was copied and falling through to the base volume where it was not.
-  Hex, preview, export and folder export all read snapshot content, and
-  the snapshot context is labelled throughout so results are never
-  confused with the live volume
-  ([#49](https://github.com/switch-nz/strata/issues/49)).
 - **Split raw sets written by FTK Imager, Guymager and `dd` with `split`
   now open as one exhibit.** Only three-digit `.001`/`.002` naming was
   joined before, so a set numbered any other way opened as its first piece
@@ -686,7 +695,8 @@ Corroborate results in these areas with another tool before relying on them.
   ([#15](https://github.com/switch-nz/strata/issues/15),
   [#19](https://github.com/switch-nz/strata/issues/19)).
 
-[Unreleased]: https://github.com/switch-nz/strata/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/switch-nz/strata/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/switch-nz/strata/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/switch-nz/strata/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/switch-nz/strata/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/switch-nz/strata/compare/v0.1.2...v0.2.0
