@@ -41,3 +41,7 @@ venv/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Native sidecar build output and locally installed test binaries
+native/target/
+engine/native/*/

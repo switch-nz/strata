@@ -1,5 +1,7 @@
 import struct
 
+from .. import native
+
 SBOX = bytes((
     0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b,
     0xfe, 0xd7, 0xab, 0x76, 0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0,
@@ -68,18 +70,22 @@ MASK = 0xFFFFFFFF
 
 class AES:
 
-    __slots__ = ("rounds", "ek", "dk", "key_size")
+    __slots__ = ("rounds", "ek", "dk", "key_size", "_raw")
 
     def __init__(self, key):
         key = bytes(key)
         if len(key) not in (16, 24, 32):
             raise ValueError("AES key must be 16, 24 or 32 bytes, got %d"
                              % len(key))
+        self._raw = key
         self.key_size = len(key)
         nk = len(key) // 4
         self.rounds = nk + 6
         self.ek = self._expand(key, nk)
         self.dk = self._invert(self.ek)
+
+    def _raw_key(self):
+        return self._raw
 
     def _expand(self, key, nk):
         w = list(struct.unpack(">%dI" % nk, key))
@@ -183,7 +189,7 @@ class AES:
 def _xor(a, b):
     return bytes(x ^ y for x, y in zip(a, b))
 
-def cbc_decrypt(key, iv, data):
+def _cbc_decrypt_py(key, iv, data):
     a = key if isinstance(key, AES) else AES(key)
     out = bytearray()
     prev = iv
@@ -192,6 +198,18 @@ def cbc_decrypt(key, iv, data):
         out += _xor(a.decrypt_block(block), prev)
         prev = block
     return bytes(out)
+
+
+def cbc_decrypt(key, iv, data):
+    raw = key.key_size if isinstance(key, AES) else len(key)
+    kb = key if not isinstance(key, AES) else _key_bytes(key)
+    if native.available() and raw in (16, 24, 32) and len(iv) == 16 \
+            and len(data) and len(data) % 16 == 0:
+        try:
+            return native.aes_cbc_decrypt(kb, iv, data)
+        except native.NativeError:
+            pass
+    return _cbc_decrypt_py(key, iv, data)
 
 def _gf_mul_alpha(t):
     lo, hi = struct.unpack("<QQ", t)
@@ -205,7 +223,7 @@ def _gf_mul_alpha(t):
 def _xts_tweak(c2, sector):
     return c2.encrypt_block(struct.pack("<Q", sector) + b"\x00" * 8)
 
-def xts_decrypt(key1, key2, sector, data):
+def _xts_decrypt_py(key1, key2, sector, data):
     c1 = key1 if isinstance(key1, AES) else AES(key1)
     c2 = key2 if isinstance(key2, AES) else AES(key2)
     tweak = _xts_tweak(c2, sector)
@@ -232,3 +250,23 @@ def xts_decrypt(key1, key2, sector, data):
         out += _xor(c1.decrypt_block(_xor(full, tweak)), tweak)
         out += tail
     return bytes(out)
+
+
+def _key_bytes(key):
+    """Raw key bytes of an AES instance (kept for the native bridge)."""
+    return key._raw_key()
+
+
+def xts_decrypt(key1, key2, sector, data, sector_size=None):
+    if native.available() and len(data) >= 16:
+        k1 = _key_bytes(key1) if isinstance(key1, AES) else bytes(key1)
+        k2 = _key_bytes(key2) if isinstance(key2, AES) else bytes(key2)
+        if len(k1) == len(k2) and len(k1) in (16, 24, 32):
+            try:
+                return native.aes_xts_decrypt(k1, k2, sector, data,
+                                              sector_size=sector_size)
+            except native.NativeError:
+                pass
+    return _xts_decrypt_py(key1, key2, sector, data)
+
+

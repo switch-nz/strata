@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: write
+  actions: write   # dispatch the sidecar build for the release
 
 concurrency:
   group: release

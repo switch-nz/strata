@@ -11,6 +11,20 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+### Changed
+
+- **Encrypted-volume unlock and reading are much faster when the optional
+  native crypto module is installed.** Each release carries it as a
+  separate download, `strata-native-<version>.zip`; extract it into the
+  Strata folder and it is used automatically. Unlocking a LUKS2 volume
+  with heavy key-derivation settings drops from over a minute to a
+  fraction of a second, and decrypted reads from LUKS2 and BitLocker
+  images go from under 1 MB/s to tens of MB/s (measured on a 64 MiB
+  image). Results are byte-identical to the built-in implementation, which
+  is kept and used whenever the module is absent. The module checks
+  itself against published test vectors (Argon2id, AES-CBC and AES-XTS)
+  when it loads, and is not used if any of them fails.
+
 ## [0.5.0] - 2026-09-25
 
 A feature release: shadow copies and APFS snapshots can be opened and
@@ -326,6 +340,7 @@ VMDK and the registry that closes out #19 in full. Upgrade from 0.1.2.
   exhibit and path that shares one — only among files a hash run has
   already covered, since nothing here hashes a file just to compare it
   ([#67](https://github.com/switch-nz/strata/issues/67)).
+
 - **A PST attachment's content can now be viewed, not only its name and
   size.** The mail viewer listed every attachment's filename and size but
   had no way to read what was inside one. Clicking an attachment now

@@ -46,3 +46,8 @@ git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 git tag -a "$tag" "$sha" -m "Strata $version"
 git push origin "$tag"
 gh release create "$tag" --verify-tag --title "Strata $version" --notes-file "$notes"
+
+# Attach the native crypto sidecars (built by CI) to the release just made.
+# Non-fatal: the release is already published, and the job can be run again
+# by hand: gh workflow run ci.yml --ref "$tag" -f tag="$tag"
+gh workflow run ci.yml --ref "$tag" -f tag="$tag"   || echo "::warning::could not dispatch the sidecar build for $tag"
