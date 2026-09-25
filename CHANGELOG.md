@@ -41,6 +41,29 @@ records, not how the code changed.
   text; slides with text now yield it (60 of 106 decks, up from 10, the
   rest having no slide text), and an unused slot in the file's index no
   longer raises a spurious finding.
+- **Text from legacy Word files is cleaner and better attributed.** Checked
+  against 144 real Word files. A file that holds both a `0Table` and a
+  `1Table` stream now reads the one its header names, instead of whichever
+  came first (which gave no text at all for the files where it was the
+  stale one). Smart quotes, dashes and the ellipsis in 8-bit text now come
+  out as those characters instead of raw control codes. A field now shows
+  what Word displays, its result, and no longer prints its instruction
+  (`HYPERLINK "…"`, `PAGE`, `FORMTEXT`) in the middle of the sentence;
+  line breaks become line breaks and picture and footnote anchors are
+  dropped, so no control characters reach the text. Text that lives in
+  footnotes, headers and footers, comments, endnotes and text boxes is
+  now listed as its own part instead of run on after the body (38 of 113
+  files had such parts). Files whose words match an independent reader's
+  exactly went from 41 to 67 (of about 93 compared).
+- **Chromium cache listings no longer include script bytecode or show
+  meaningless URLs.** The browser's compiled-script cache (`Code Cache`)
+  uses the same file formats as its web cache and was being listed as
+  cached pages; it is now left out. A cached page's address is now read
+  from the entry's key the way Chromium reads it, so entries stored in a
+  partitioned cache show the page's own address, and an entry whose key is
+  not an address at all (the service worker script cache uses plain
+  numbers) is shown with no URL and a note instead of a number posing as
+  one. The raw key is kept alongside.
 
 ## [0.5.0] - 2026-09-25
 

@@ -136,9 +136,14 @@ def _fib():
 
 
 def build_doc(pieces=None, corrupt_clx=False, drop_pcdt=False,
-              nonmonotonic=False, table_stream="1table"):
+              nonmonotonic=False, table_stream="1table", ccp=None,
+              extra_streams=()):
     """Returns .doc bytes. pieces: list of (str, compressed) pairs making
-    up the document text; defaults to a two-piece body."""
+    up the document text; defaults to a two-piece body. The FIB's
+    fWhichTblStm names table_stream. ccp: the seven FibRgLw97 counts (main
+    text, footnotes, headers, comments, endnotes, text boxes, header text
+    boxes) when the text should be split into document parts.
+    extra_streams: more (name, data) streams, e.g. a stale table stream."""
     if pieces is None:
         pieces = [(FIB_TEXT_PIECES_A, True), (FIB_TEXT_PIECES_U, False)]
 
@@ -155,6 +160,13 @@ def build_doc(pieces=None, corrupt_clx=False, drop_pcdt=False,
         pos += len(blob)
 
     worddoc = bytearray(_fib())
+    struct.pack_into("<H", worddoc, 0x000A,
+                     0x0200 if table_stream == "1table" else 0)
+    if ccp is not None:
+        # FibRgLw97 ccpText, ccpFtn, ccpHdd, reserved3, ccpAtn, ccpEdn,
+        # ccpTxbx, ccpHdrTxbx, starting at 0x4C.
+        struct.pack_into("<8i", worddoc, 0x4C, ccp[0], ccp[1], ccp[2], 0,
+                         ccp[3], ccp[4], ccp[5], ccp[6])
     worddoc += text
     worddoc += b"\x00" * 4096             # pad so the stream is >= 4096
 
@@ -189,7 +201,7 @@ def build_doc(pieces=None, corrupt_clx=False, drop_pcdt=False,
     struct.pack_into("<I", worddoc, 0x01A6, len(clx))
 
     return build_cfb([("WordDocument", bytes(worddoc)),
-                      (table_stream, bytes(table))])
+                      (table_stream, bytes(table))] + list(extra_streams))
 
 XL_SHEET_VISIBLE = 0
 BOUNDSHEET_RECORD = 0x0085

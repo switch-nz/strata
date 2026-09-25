@@ -55,7 +55,7 @@ class ParseSimple(unittest.TestCase):
         self.assertEqual(r["status"], 200)
         self.assertEqual(r["content_type"], "text/html")
         self.assertEqual(r["source"], "chromium")
-        self.assertIsNone(r["key"])
+        self.assertEqual(r["key"], "https://example.com/page")
         self.assertIsNone(r["last_modified"])
         self.assertIsNone(r["last_fetched"])
         self.assertIsNone(r["fetched_count"])
@@ -89,6 +89,83 @@ class ParseSimple(unittest.TestCase):
         self.assertEqual(r["url"], "https://example.com/page")
         self.assertIsNone(r["status"])
         self.assertIn("no HTTP headers", r["note"])
+
+
+class ChromiumKeys(unittest.TestCase):
+    """Chromium HTTP cache keys are ``credential_key/upload_id/
+    [isolation_key]url`` (net/http/http_cache.cc), and a partitioned
+    cache's isolation key starts ``_dk_`` and ends at the last space. The
+    numeric ids of the service worker script cache are not URLs at all. The
+    row's URL comes from the key that way, and its `key` is the raw key."""
+
+    def row(self, key):
+        return bc.parse_simple_entry(simple_entry(url=key))
+
+    def test_a_partitioned_cache_key_gives_the_resource_url(self):
+        key = (b"1/0/_dk_https://top.example https://frame.example "
+               b"https://res.example/img/a.png?x=1")
+        r = self.row(key)
+        self.assertEqual(r["url"], "https://res.example/img/a.png?x=1")
+        self.assertEqual(r["key"], key.decode())
+        self.assertEqual(r["status"], 200)
+
+    def test_a_single_keyed_entry_gives_the_url_after_the_prefix(self):
+        r = self.row(b"1/0/https://res.example/b.css")
+        self.assertEqual(r["url"], "https://res.example/b.css")
+
+    def test_a_post_upload_id_is_skipped(self):
+        r = self.row(b"1/1234567/https://res.example/post")
+        self.assertEqual(r["url"], "https://res.example/post")
+
+    def test_a_bare_url_key_from_an_older_cache_is_used_as_it_is(self):
+        r = self.row(b"https://old.example/x")
+        self.assertEqual(r["url"], "https://old.example/x")
+
+    def test_a_numeric_service_worker_id_is_not_shown_as_a_url(self):
+        r = self.row(b"7")
+        self.assertIsNone(r["url"])
+        self.assertEqual(r["key"], "7")
+        self.assertEqual(r["note"], "key has no URL: 7")
+        self.assertEqual(r["status"], 200)
+
+    def test_a_partitioned_key_with_no_separator_gives_no_url(self):
+        r = self.row(b"1/0/_dk_https://top.example")
+        self.assertIsNone(r["url"])
+        self.assertEqual(r["note"], "key has no URL: 1/0/_dk_https://top.example")
+
+    def test_a_key_that_does_not_end_in_a_url_gives_no_url(self):
+        self.assertIsNone(self.row(b"1/0/not a url")["url"])
+
+
+class ChromiumCodeCache(unittest.TestCase):
+    """Chromium's V8 code cache uses the same file formats as the HTTP
+    cache but holds script bytecode, not web content; it must not be
+    listed as cached pages."""
+
+    def test_code_cache_files_are_not_cache_entries(self):
+        for path in ("/Users/u/AppData/Local/Google/Chrome/User Data/"
+                     "Default/Code Cache/js/0123456789abcdef_0",
+                     "/p/Default/Code Cache/wasm/0123456789abcdef_0",
+                     "/p/Default/Code Cache/js/index-dir/the-real-index",
+                     "/p/Default/Storage/ext/x/def/Code Cache/js/"
+                     "0123456789abcdef_0"):
+            name = path.rsplit("/", 1)[1]
+            self.assertIsNone(bc.classify({"name": name, "path": path}),
+                              path)
+
+    def test_the_http_cache_beside_it_is_still_classified(self):
+        self.assertEqual(
+            bc.classify({"name": "0123456789abcdef_0",
+                         "path": "/p/Default/Cache/Cache_Data/"
+                                 "0123456789abcdef_0"}), "chromium")
+        self.assertEqual(
+            bc.classify({"name": "data_1",
+                         "path": "/p/Default/Cache/Cache_Data/data_1"}),
+            "blockfile")
+        self.assertEqual(
+            bc.classify({"name": "the-real-index",
+                         "path": "/p/Default/Cache/Cache_Data/index-dir/"
+                                 "the-real-index"}), "index")
 
 
 class ParseCache2(unittest.TestCase):

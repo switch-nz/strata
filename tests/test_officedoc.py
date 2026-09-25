@@ -157,6 +157,95 @@ class WordSpecOffsets(unittest.TestCase):
         self.assertEqual(findings, [])
 
 
+class WordRealWorldText(unittest.TestCase):
+    """What Word actually writes: a stale second table stream, fields,
+    special characters, smart quotes in 8-bit text, and text kept in parts
+    (footnotes, headers, comments) that the character counts in the FIB
+    separate. Built in code from [MS-DOC], not captured from any file."""
+
+    def test_the_named_table_stream_wins_when_both_exist(self):
+        # fWhichTblStm clear -> 0Table; a stale 1Table left by an earlier
+        # save is not the piece table.
+        stale = ("1table", bytes(4096))
+        res = parse(ib.build_doc(table_stream="0table",
+                                 extra_streams=[stale]), "t.doc")
+        self.assertEqual(res["text"],
+                         ib.FIB_TEXT_PIECES_A + ib.FIB_TEXT_PIECES_U)
+        self.assertEqual(res["findings"], [])
+
+    def test_a_missing_named_stream_falls_back_with_a_finding(self):
+        data = ib.build_doc(table_stream="0table")
+        o = ole2.Ole2(data, "t.doc")
+        ents = dict(o.streams())
+        worddoc = bytearray(o.read(ents["WordDocument"], 1 << 20))
+        struct.pack_into("<H", worddoc, 0x0A, 0x0200)       # names 1Table
+        table = o.read(ents["0table"], 1 << 20)
+        res = parse(rewrap([("WordDocument", worddoc), ("0table", table)]),
+                    "t.doc")
+        self.assertEqual(res["text"],
+                         ib.FIB_TEXT_PIECES_A + ib.FIB_TEXT_PIECES_U)
+        self.assertEqual(res["findings"],
+                         ["Word document (legacy .doc): the file header "
+                          "names the 1table stream but only 0table exists; "
+                          "it was read instead."])
+
+    def text_of(self, s):
+        return parse(ib.build_doc([(s, True)]), "t.doc")["text"]
+
+    def test_a_field_shows_its_result_not_its_instruction(self):
+        self.assertEqual(
+            self.text_of('See \x13 HYPERLINK "http://x.test" \x14click here'
+                         '\x15 now'), "See click here now")
+
+    def test_nested_fields_show_only_the_outer_result(self):
+        self.assertEqual(
+            self.text_of("\x13 A \x13 B \x14 inner\x15 \x14outer\x15!"),
+            "outer!")
+
+    def test_a_field_with_no_result_shows_nothing(self):
+        self.assertEqual(self.text_of("a\x13 PAGE \x15b"), "ab")
+
+    def test_a_stray_field_end_mark_is_ignored(self):
+        self.assertEqual(self.text_of("a\x15b"), "ab")
+
+    def test_special_characters_are_mapped_or_dropped(self):
+        # \x0b line break, \x1e non-breaking hyphen, \x01 and \x08 object
+        # anchors, \x1f optional hyphen
+        self.assertEqual(self.text_of("x\x0by\x1ez\x01\x08w\x1fv"),
+                         "x\ny-zwv")
+
+    def test_compressed_text_uses_the_characters_the_spec_names(self):
+        # FcCompressed: 0x93/0x94 are the curly double quotes, 0x96 an en
+        # dash, 0x92 the apostrophe, 0x85 an ellipsis.
+        self.assertEqual(self.text_of("\x93q\x94 \x96 it\x92s\x85"),
+                         "“q” – it’s…")
+
+    def test_document_parts_are_split_by_the_fib_counts(self):
+        data = ib.build_doc([("Body\rFoot\rHead\rNote\r", True)],
+                            ccp=(5, 5, 5, 5, 0, 0, 0))
+        res = parse(data, "t.doc")
+        self.assertEqual(res["sections"],
+                         [{"name": "document", "text": "Body"},
+                          {"name": "footnotes", "text": "Foot"},
+                          {"name": "headers", "text": "Head"},
+                          {"name": "comments", "text": "Note"}])
+        self.assertEqual(res["text"], "Body\n\nFoot\n\nHead\n\nNote")
+
+    def test_counts_that_do_not_fit_the_text_leave_one_section(self):
+        data = ib.build_doc([("Body\rFoot\rHead\rNote\r", True)],
+                            ccp=(50, 5, 5, 5, 0, 0, 0))
+        res = parse(data, "t.doc")
+        self.assertEqual(res["sections"],
+                         [{"name": "document",
+                           "text": "Body\nFoot\nHead\nNote"}])
+
+    def test_a_final_paragraph_mark_stays_with_the_last_part(self):
+        data = ib.build_doc([("Body\r", True)], ccp=(4, 0, 0, 0, 0, 0, 0))
+        res = parse(data, "t.doc")
+        self.assertEqual(res["sections"],
+                         [{"name": "document", "text": "Body"}])
+
+
 class XlsCellRecords(unittest.TestCase):
     """Text via the SST and per-sheet BIFF8 cell records ([MS-XLS])."""
 
