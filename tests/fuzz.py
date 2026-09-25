@@ -181,6 +181,36 @@ def run_vmdk(data):
     run_ewf(data, name="disk.vmdk")
 
 
+_BLOCKFILE_SPLIT = []
+
+
+def _blockfile_seed():
+    """data_1 (entry records) then data_2 (response pickles), built by the
+    unit-test builders; the other cache files stay fixed."""
+    import test_blockfilecache as t
+    files = t.cache_folder([
+        ("1/0/_dk_https://a.example https://a.example https://a.example/x",
+         {}),
+        ("1/0/https://b.example/" + "k" * 300, {"state": 2}),
+        ("Range_1234_5", {}),
+        ("1/0/https://c.example/" + "z" * 1200,
+         {"long_key": t.addr(0, 1), "key_len": 1223}),
+    ], extra_files={"f_000001": b"1/0/https://c.example/" + b"z" * 1200
+                    + bytes(1)})
+    _BLOCKFILE_SPLIT[:] = [len(files["data_1"]), files]
+    return files["data_1"] + files["data_2"]
+
+
+def run_blockfile(data):
+    import test_blockfilecache as t
+    from engine import browsercache
+    if not _BLOCKFILE_SPLIT:
+        _blockfile_seed()
+    cut, files = _BLOCKFILE_SPLIT
+    files = dict(files, data_1=data[:cut], data_2=data[cut:])
+    browsercache.parse_blockfile_folder(t.mem(files), "C/x/Cache/Cache_Data")
+
+
 def _seeds_fs():
     import imagebuild_apfs
     import imagebuild_ext4
@@ -224,6 +254,7 @@ def targets():
     out["hive"] = (imagebuild_registry.build_hive, run_hive)
     out["reglog"] = (lambda: imagebuild_registry.build_dirty_pair()[1],
                      run_reglog)
+    out["blockfile"] = (_blockfile_seed, run_blockfile)
     out["ewf"] = (lambda: imagebuild_ewf.build_e01()[0], run_ewf)
     out["vmdk-sparse"] = (imagebuild_vmdk.build_sparse, run_vmdk)
     out["vmdk-stream"] = (lambda: imagebuild_vmdk.build_stream_optimized()[0],

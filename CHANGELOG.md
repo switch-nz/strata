@@ -11,6 +11,25 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+### Added
+
+- **Chromium blockfile cache.** The `data_0`–`data_3` and `f_XXXXXX` cache that
+  Chrome and Edge on Windows write for web content is now read: URL, status,
+  content type, body size, when it was fetched, created and last used, and how
+  often it was refetched. Entries are found by reading the cache files
+  themselves rather than the index, so ones the browser has already dropped
+  (doomed, evicted, or in freed blocks) are listed too and marked as such.
+  Only response headers and metadata are read, not cached bodies. Checked
+  against real Chrome and Edge caches of known content. A Browser result saved
+  by an earlier version is discarded and must be run again
+  (recorded in the audit log as `artefact.reset`).
+
+### Fixed
+
+- **Cache status codes.** A cached response whose headers contained the text
+  `HTTP/` (for example `Server: BaseHTTP/0.6`) showed no status. The status is
+  now always taken from the status line.
+
 ## [0.5.1] - 2026-09-25
 
 A fix release for the legacy Office and browser-cache readers shipped in

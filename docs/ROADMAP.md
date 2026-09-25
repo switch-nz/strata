@@ -85,14 +85,13 @@ recognised and refused by name today; these entries are about *reading* it.
 - [ ] **`$LogFile`** — the log NTFS keeps for crash recovery. A different
       structure from `$UsnJrnl` and a much shorter window, but it records the
       operations rather than a summary per file.
-- [~] **Browser disk cache** — Chromium Simple Cache and Firefox cache2
-      entries are read (URL, status, content type, times, fetch count),
-      separate from the history databases. The Chromium blockfile cache and
-      index are recognised and counted, not parsed, and real Chrome and Edge
-      on Windows wrote only that format for web content in testing, so today
-      this lists little there. Checked against real Chrome output (its
-      service worker script cache) and synthetic entries; Firefox cache2 is
-      synthetic only so far.
+- [x] **Browser disk cache** — Chromium blockfile (what Chrome and Edge on
+      Windows write for web content), Chromium Simple Cache and Firefox cache2
+      entries are read (URL, status, content type, times), separate from the
+      history databases. Blockfile entries come from the cache files rather
+      than the index, so dropped entries are found and marked. Bodies are not
+      read. Checked against real Chrome and Edge caches (blockfile) and Chrome's
+      service worker script cache; Firefox cache2 is synthetic only so far.
 - [ ] **Event ID descriptions**, and timelining across logs.
 - [ ] **PST:** ANSI (32-bit) files are refused today; OST-specific
       structures are not handled.

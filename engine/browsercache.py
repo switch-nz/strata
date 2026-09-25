@@ -3,14 +3,16 @@
 Chromium Simple Cache entries (``<16-hex-hash>_0``) and Firefox cache2
 entries (``cache2/entries/<2hex>/<2hex>/<40hex>``) are self-describing;
 this module decodes the URL, HTTP status and timestamps straight out of
-each entry file. The Chromium index (``index-dir/the-real-index``) and
-the legacy blockfile backend (``data_0``..``data_4``, ``f_XXXXXX``) are
-detected and reported but never parsed.
+each entry file. Chromium's blockfile backend (``data_0``..``data_3``,
+``f_XXXXXX``), which Chrome and Edge on Windows write for web content, is
+read folder by folder through engine.blockfilecache. The Chromium index
+(``index-dir/the-real-index``) is detected and reported but not parsed.
 """
 
 import re
 import struct
 
+from . import blockfilecache
 from . import browser
 
 SIMPLE_INITIAL_MAGIC = 0xFCFB6D1BA7725C30
@@ -55,12 +57,17 @@ def classify(e):
     return None
 
 
+_STATUS_LINE = re.compile(rb"HTTP/\d(?:\.\d)? +\d{3}")
+
+
 def _split_http_headers(blob):
     """(status, content_type, note) from a stream holding an HTTP head."""
-    pos = blob.rfind(b"HTTP/")
-    if pos < 0:
+    # A status line, not any "HTTP/" (a header such as "Server: BaseHTTP/0.6"
+    # contains one); the last one, as the head sits after any preamble.
+    found = list(_STATUS_LINE.finditer(blob))
+    if not found:
         return None, None, "no HTTP headers in stream 0"
-    head = blob[pos:]
+    head = blob[found[-1].start():]
     end = head.find(b"\r\n\r\n")
     if end >= 0:
         head = head[:end]
@@ -249,6 +256,78 @@ def parse_entry(data, entry):
     return row
 
 
+class _EntryReader:
+    """Random access to one walked file: the filesystem's ranged read when
+    it has one, otherwise the file read once, up to a cap."""
+
+    CAP = 512 << 20
+
+    def __init__(self, fs, entry):
+        self.fs, self.entry = fs, entry
+        self.size = int(entry.get("size") or 0)
+        self._all = None
+
+    def read_at(self, offset, length):
+        ranged = getattr(self.fs, "read_range", None)
+        if ranged is not None:
+            try:
+                return ranged(self.entry, offset, length)
+            except TypeError:
+                pass
+        if self._all is None:
+            self._all = self.fs.read_file(self.entry,
+                                          min(self.size, self.CAP))
+        return self._all[offset:offset + length]
+
+
+def parse_blockfile_folder(readers, folder):
+    """Rows for every coherent entry in one blockfile cache folder.
+
+    readers: {file name: reader with ``size`` and ``read_at``}. Returns
+    (rows, sparse_children_left_out). An entry that is doomed, evicted or
+    in a freed block is still a row, with a note saying so."""
+    found, sparse = blockfilecache.entries(blockfilecache.Files(readers))
+    product = browser.product_from_path(folder)
+    rows = []
+    for e in found:
+        status = content_type = fetched = None
+        notes = []
+        info = blockfilecache._response(e["stream0"])
+        if info is None:
+            notes.append("response headers could not be read")
+        else:
+            lines = info[2]
+            status, content_type, _ = _split_http_headers(
+                b"\r\n".join(lines) + b"\r\n\r\n")
+            fetched = blockfilecache.chromium_time(info[1])
+        url = _chromium_key_url(e["key"])
+        if url is None:
+            notes.append("key has no URL: %s" % e["key"])
+        if e["state"]:
+            notes.append("entry was %s" % e["state"])
+        if not e["allocated"]:
+            notes.append("entry's block is not allocated (deleted)")
+        rows.append({
+            "url": url, "key": e["key"], "status": status,
+            "content_type": content_type,
+            "last_modified": None, "last_fetched": fetched,
+            "fetched_count": e["refetch_count"],
+            "created": blockfilecache.chromium_time(e["created"]),
+            "last_used": blockfilecache.chromium_time(e["last_used"]),
+            "source": "chromium", "format": "blockfile",
+            "note": "; ".join(notes) or None,
+            "product": product,
+            "path": "%s/%s" % (folder, e["file"]),
+            "offset": e["offset"],
+            "size": e["sizes"][1],
+        })
+    return rows, sparse
+
+
+def _folder_of(path):
+    return (path or "").rstrip("/").rsplit("/", 1)[0]
+
+
 def collect(fs, entries, progress=None, limit=20000):
     """Parse cache entry files out of an already-collected walk.
 
@@ -258,13 +337,18 @@ def collect(fs, entries, progress=None, limit=20000):
     rows, findings = [], []
     parsed = skipped = blockfile = 0
     index_present = False
+    folders = {}
     total = max(1, len(entries))
     for i, e in enumerate(entries):
         if progress is not None and i % 64 == 0:
             progress(i / total)
+        if e.get("is_dir") or not (e.get("size") or 0):
+            continue                          # nothing to read
         kind = classify(e)
         if kind == "blockfile":
             blockfile += 1
+            folders.setdefault(_folder_of(e.get("path")), {})[
+                (e.get("name") or "").lower()] = _EntryReader(fs, e)
             continue
         if kind == "index":
             index_present = True
@@ -286,11 +370,32 @@ def collect(fs, entries, progress=None, limit=20000):
         else:
             rows.append(row)
             parsed += 1
+    block_rows = block_folders = sparse = 0
+    for folder, readers in sorted(folders.items()):
+        try:
+            got, left_out = parse_blockfile_folder(readers, folder)
+        except Exception:
+            got, left_out = [], 0
+        if not got and not any(n.startswith("data_") for n in readers):
+            continue
+        block_folders += 1
+        sparse += left_out
+        room = max(0, limit - len(rows))
+        rows.extend(got[:room])
+        parsed += min(len(got), room)
+        skipped += max(0, len(got) - room)
+        block_rows += len(got)
     if blockfile:
         findings.append(
-            "Legacy Chromium blockfile cache found (%d file%s under a "
-            "Cache data directory); its entries were not parsed."
-            % (blockfile, "" if blockfile == 1 else "s"))
+            "Chromium blockfile cache read from %d folder%s (%d file%s): "
+            "%d entr%s, including any doomed, evicted or deleted ones, "
+            "which are marked. Only response headers and metadata are "
+            "read, not cached bodies%s."
+            % (block_folders, "" if block_folders == 1 else "s",
+               blockfile, "" if blockfile == 1 else "s",
+               block_rows, "y" if block_rows == 1 else "ies",
+               "; %d sparse range entr%s left out"
+               % (sparse, "y" if sparse == 1 else "ies") if sparse else ""))
     if index_present:
         findings.append(
             "A Chromium cache index (index-dir/the-real-index) is present; "
