@@ -575,6 +575,8 @@ def _xls_short_string(body, at):
     """A ShortXLUnicodeString: cch u8, flags u8, then cch characters
     (UTF-16LE when the high-byte flag is set). Returns (text, offset
     just past the string)."""
+    if at + 2 > len(body):
+        return "", at
     cch = body[at]
     high = bool(body[at + 1] & 0x01)
     raw = body[at + 2:at + 2 + cch * (2 if high else 1)]
@@ -601,9 +603,11 @@ def _xls_body(blob, findings, label):
         if rid == SST_RECORD:
             sst, at = _xls_read_sst(blob, at - 4 - rlen, findings, label)
             continue
-        if rid == BOUNDSHEET_RECORD and len(body) >= 7:
-            lb, hs, dt = struct.unpack_from("<IHB", body, 0)
-            name, _rest = _xls_short_string(body, 7)
+        if rid == BOUNDSHEET_RECORD and len(body) >= 6:
+            # BoundSheet8 ([MS-XLS] 2.4.28): lbPlyPos (4), hsState (1),
+            # dt (1), then stName, a ShortXLUnicodeString, at offset 6.
+            lb, hs, dt = struct.unpack_from("<IBB", body, 0)
+            name, _rest = _xls_short_string(body, 6)
             sheets.append((lb, dt, name))
             continue
     # Sheets are parsed from their substreams below, keyed by the BOUNDSHEET
@@ -668,73 +672,107 @@ def _xls_body(blob, findings, label):
     return "\n".join(out)
 
 def _xls_read_sst(blob, at, findings, label):
-    """Parse one SST record plus its CONTINUE record tail. Returns
-    (strings, offset just past the CONTINUE chain)."""
+    """Parse one SST record plus its CONTINUE tail. Returns (strings,
+    offset just past the CONTINUE chain).
+
+    Each string is an XLUnicodeRichExtendedString ([MS-XLS] 2.5.293):
+    cch (2), flags (1), cRun (2, when the rich flag is set), cbExtRst (4,
+    when the phonetic flag is set), the characters, then rgRun (4 bytes
+    per cRun) and ExtRst (cbExtRst bytes) AFTER the characters. The
+    formatting and phonetic data is skipped, but it must be skipped from
+    the right place or every later string reads out of step.
+
+    A string's characters may continue into a CONTINUE record, which then
+    starts with a fresh flags byte (only the width bit matters); the
+    formatting and phonetic tails carry no such byte."""
     rid, rlen = struct.unpack_from("<HH", blob, at)
-    body_end = at + 4 + rlen
     unique, = struct.unpack_from("<I", blob, at + 8)
-    strings = []
-    pos = at + 12
-    end = body_end
-    while len(strings) < unique:
-        if pos + 3 > end:
-            findings.append("%s: the shared-string table names more "
-                            "strings than it holds; the rest read as "
-                            "empty." % label)
-            break
-        cch, = struct.unpack_from("<H", blob, pos)
-        flags = blob[pos + 2]
-        pos += 3
-        rich = bool(flags & 0x08)
-        ext = bool(flags & 0x04)
-        high = bool(flags & 0x01)
-        if rich:
-            pos += 2 * struct.unpack_from("<H", blob, pos)[0] if pos + 2 <= end else 0
-            if pos > end:
-                break
-        # (cRun skipped; format runs carry no text)
-        if ext:
-            cb, = struct.unpack_from("<H", blob, pos) if pos + 2 <= end else (0,)
-            pos += 2 + cb
-            if pos > end:
-                break
-        want = cch * (2 if high else 1)
-        raw = bytearray()
-        while len(raw) < want and pos < end:
-            room = min(end - pos, want - len(raw))
-            raw += blob[pos:pos + room]
-            pos += room
-            if len(raw) < want and pos == end:
-                # find the CONTINUE record that extends this string
-                if pos + 4 <= len(blob):
-                    nrid, nlen = struct.unpack_from("<HH", blob, pos)
-                    if nrid == CONTINUE_RECORD:
-                        pos += 4
-                        end = pos + nlen
-                        if want - len(raw) >= 1:
-                            # a fresh flags byte applies when the
-                            # continuation starts mid-string
-                            if pos < end:
-                                flags = blob[pos]
-                                pos += 1
-                                high = bool(flags & 0x01)
-                        continue
-                findings.append("%s: a shared string runs past the end "
-                                "of its record; it was dropped." % label)
-                break
-        if len(raw) < want:
-            break
-        try:
-            strings.append(raw.decode("utf-16-le" if high else "latin-1"))
-        except UnicodeDecodeError:
-            strings.append(raw.decode("utf-16-le", "replace") if high
-                           else raw.decode("latin-1"))
-    skip = end
+    segs = [(at + 12, at + 4 + rlen)]
+    skip = at + 4 + rlen
     while skip + 4 <= len(blob):
         nrid, nlen = struct.unpack_from("<HH", blob, skip)
         if nrid != CONTINUE_RECORD:
             break
+        segs.append((skip + 4, skip + 4 + nlen))
         skip += 4 + nlen
+
+    seg, pos = 0, segs[0][0]
+
+    def room():
+        """Advance past exhausted records; True while bytes remain."""
+        nonlocal seg, pos
+        while seg < len(segs) and pos >= segs[seg][1]:
+            seg += 1
+            if seg < len(segs):
+                pos = segs[seg][0]
+        return seg < len(segs)
+
+    def take(n):
+        nonlocal pos
+        out = bytearray()
+        while len(out) < n:
+            if not room():
+                return None
+            k = min(segs[seg][1] - pos, n - len(out))
+            out += blob[pos:pos + k]
+            pos += k
+        return bytes(out)
+
+    strings = []
+    while len(strings) < unique:
+        head = take(3)
+        if head is None:
+            findings.append("%s: the shared-string table names more "
+                            "strings than it holds; the rest read as "
+                            "empty." % label)
+            break
+        cch, = struct.unpack_from("<H", head, 0)
+        flags = head[2]
+        runs = take(2) if flags & 0x08 else bytes(2)
+        ext = take(4) if flags & 0x04 else bytes(4)
+        if runs is None or ext is None:
+            findings.append("%s: a shared string is cut short; the rest "
+                            "of the table was not read." % label)
+            break
+        crun, = struct.unpack("<H", runs)
+        cb_ext, = struct.unpack("<I", ext)
+
+        high = bool(flags & 0x01)
+        left, pieces, whole = cch, [], True
+        while left > 0:
+            before = seg
+            if not room():
+                whole = False
+                break
+            if seg != before:
+                # The characters continue in a CONTINUE record, which
+                # starts with a fresh flags byte (width bit only).
+                high = bool(blob[pos] & 0x01)
+                pos += 1
+                if not room():
+                    whole = False
+                    break
+            width = 2 if high else 1
+            n = min(left, (segs[seg][1] - pos) // width)
+            if n == 0:
+                whole = False
+                break
+            pieces.append(blob[pos:pos + n * width].decode(
+                "utf-16-le" if high else "latin-1", "replace"))
+            pos += n * width
+            left -= n
+        if not whole:
+            findings.append("%s: a shared string runs past the end of its "
+                            "record; the rest of the table was not read."
+                            % label)
+            break
+        if take(4 * crun) is None or take(cb_ext) is None:
+            findings.append("%s: a shared string's formatting data is cut "
+                            "short; the rest of the table was not read."
+                            % label)
+            strings.append("".join(pieces))
+            break
+        strings.append("".join(pieces))
     return strings, skip
 
 
@@ -758,10 +796,10 @@ def _ppt_text_records(blob, top, findings, label):
     dropped, not guessed at. Returns a list of run strings."""
     runs = []
     stack = [(top, top + 8 + struct.unpack_from("<I", blob, top + 4)[0])]
-    steps = 0
     while stack:
-        steps += 1
-        if steps > 4096 or len(stack) > 64:
+        # Every pass either pops a frame or consumes at least one 8-byte
+        # record header, so the walk ends by itself; only depth needs a cap.
+        if len(stack) > 64:
             findings.append("%s: a slide holds too many nested records "
                             "to walk; the rest was skipped." % label)
             break
@@ -778,8 +816,11 @@ def _ppt_text_records(blob, top, findings, label):
             break
         if ver & 0x000F == 0x000F or rid == PPT_ESCHER_CLIENT:
             # Containers (0xF) descend; Escher client-textbox wrappers
-            # are formally atoms but their body is a record list.
-            stack[-1] = (base + 8, end)
+            # are formally atoms but their body is a record list. The
+            # rest of this frame is kept, so siblings after the container
+            # are still visited once it is done.
+            stack[-1] = (end, limit)
+            stack.append((base + 8, end))
             continue
         stack[-1] = (end, limit)
         if rid == PPT_TEXT_HEADER:
@@ -880,7 +921,9 @@ def _ppt_body(doc, current, findings, label):
     out = []
     for pid in sorted(persist):
         pos = persist[pid]
-        if not pos or pos + 8 > len(doc):
+        if not pos:
+            continue                          # a freed persist slot
+        if pos + 8 > len(doc):
             findings.append("%s: a persist record sits outside the "
                             "PowerPoint stream; it was skipped." % label)
             continue
@@ -891,6 +934,18 @@ def _ppt_body(doc, current, findings, label):
         if runs:
             out.append("\n".join(runs))
     return "\n\n".join(out)
+
+
+def _guarded(reader, findings, label, *args):
+    """Run one body reader. A record cut short in a way the reader did not
+    anticipate costs the text, with a finding, and never the parse: the
+    properties are always returned."""
+    try:
+        return reader(*args, findings, label)
+    except (IndexError, struct.error, ValueError, OverflowError) as exc:
+        findings.append("%s: the body could not be read (%s: %s); no text "
+                        "was offered." % (label, type(exc).__name__, exc))
+        return ""
 
 
 def parse_ole2_document(data, name=""):
@@ -932,12 +987,12 @@ def parse_ole2_document(data, name=""):
             if tent is not None:
                 table = o.read(tent, MAX_PART)
                 break
-        txt = _word_body(worddoc, table, findings, kind)
+        txt = _guarded(_word_body, findings, kind, worddoc, table)
         if txt.strip():
             sections.append(("document", txt))
     elif kind == "Excel workbook (legacy .xls)":
         sent = names.get("workbook") or names.get("book")
-        txt = _xls_body(o.read(sent, MAX_PART), findings, kind)
+        txt = _guarded(_xls_body, findings, kind, o.read(sent, MAX_PART))
         if txt.strip():
             sections.append(("workbook", txt))
     elif kind == "PowerPoint presentation (legacy .ppt)":
@@ -946,7 +1001,7 @@ def parse_ole2_document(data, name=""):
         cuent = names.get("current user")
         if cuent is not None:
             current = o.read(cuent, MAX_PART)
-        txt = _ppt_body(doc, current, findings, kind)
+        txt = _guarded(_ppt_body, findings, kind, doc, current)
         if txt.strip():
             sections.append(("slides", txt))
 
