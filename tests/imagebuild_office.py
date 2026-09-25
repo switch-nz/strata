@@ -218,6 +218,18 @@ def _short_xlstr(s):
     return struct.pack("<BB", len(s), 0x01 if high else 0x00) + raw
 
 
+class Styled(str):
+    """A shared string carrying formatting runs and/or phonetic data, as
+    Excel writes for a cell with mixed formatting or East Asian text.
+    The reader must skip both to stay in step with the strings after it."""
+
+    def __new__(cls, text, runs=0, ext=b""):
+        obj = super().__new__(cls, text)
+        obj.runs = runs
+        obj.ext = ext
+        return obj
+
+
 def _record(rid, body):
     return struct.pack("<HH", rid, len(body)) + body
 
@@ -240,12 +252,23 @@ def build_xls(sheets):
         raw = s.encode("utf-16-le") if any(ord(ch) > 255 for ch in s) \
             else s.encode("latin-1")
         high = any(ord(ch) > 255 for ch in s)
-        sst_body += struct.pack("<HB", len(s), 0x01 if high else 0x00) + raw
+        runs = getattr(s, "runs", 0)
+        ext = getattr(s, "ext", b"")
+        flags = (0x01 if high else 0x00) | (0x08 if runs else 0) \
+            | (0x04 if ext else 0)
+        # [MS-XLS] 2.5.293: cch, flags, [cRun], [cbExtRst], characters,
+        # then rgRun (4 bytes per run) and ExtRst AFTER the characters.
+        sst_body += struct.pack("<HB", len(s), flags)
+        if runs:
+            sst_body += struct.pack("<H", runs)
+        if ext:
+            sst_body += struct.pack("<I", len(ext))
+        sst_body += raw + b"\x01\x00\x02\x00" * runs + ext
     # one BOUNDSHEET placeholder per sheet; lbPlyPos patched after sizes settle
     bounds = b""
     for name, _cells in sheets:
         bounds += _record(BOUNDSHEET_RECORD,
-                          struct.pack("<IHB", 0, 0, XL_SHEET_VISIBLE)
+                          struct.pack("<IBB", 0, XL_SHEET_VISIBLE, 0)
                           + _short_xlstr(name))
     globals_sub = _record(BOF_RECORD, bof8) + _record(SST_RECORD, sst_body) + bounds
     # Substreams follow. Sizes first (BOUNDSHEET needs absolute offsets),
@@ -284,7 +307,7 @@ def build_xls(sheets):
         base = len(_record(BOF_RECORD, bof8)) + len(_record(SST_RECORD, sst_body))
         for j in range(i):
             base += len(_record(BOUNDSHEET_RECORD,
-                                struct.pack("<IHB", 0, 0, XL_SHEET_VISIBLE)
+                                struct.pack("<IBB", 0, XL_SHEET_VISIBLE, 0)
                                 + _short_xlstr(sheets[j][0])))
         struct.pack_into("<I", workbook, base + 4, off)
     if len(workbook) < 4096:
@@ -312,7 +335,7 @@ def _ppt_container(rid, children):
     return _ppt_atom(rid, body, ver_inst=0x000F)
 
 
-def _ppt_slide_kids(texts):
+def _ppt_slide_kids(texts, nested=False):
     """A Slide container's children: SlideAtom, then one PPDrawing
     holding an Escher client-textbox with a TextHeaderAtom + text atom
     pair per run — the nesting real slides use."""
@@ -325,11 +348,38 @@ def _ppt_slide_kids(texts):
             runs += _ppt_atom(PPT_TEXT_CHARS, t.encode("utf-16-le"))
         else:
             runs += _ppt_atom(PPT_TEXT_BYTES, t.encode("latin-1"))
+    if nested:
+        return [slideatom, _ppt_container(0x040C, [_ppt_shapes(texts)])]
     return [slideatom,
             _ppt_container(0x040C, [_ppt_atom(0xF00D, runs)])]
 
 
-def build_ppt(slides):
+def _ppt_shapes(texts):
+    """An Escher drawing the way PowerPoint writes it: a DgContainer
+    holding an SpgrContainer of shapes, the first a background shape with
+    no text and then one text shape (SpContainer with a client textbox)
+    per string, and a trailing shape outside the group. Most of the text
+    sits after the first nested container."""
+    def textbox(t):
+        run = _ppt_atom(PPT_TEXT_HEADER, struct.pack("<I", 0))
+        if any(ord(ch) > 255 for ch in t):
+            run += _ppt_atom(PPT_TEXT_CHARS, t.encode("utf-16-le"))
+        else:
+            run += _ppt_atom(PPT_TEXT_BYTES, t.encode("latin-1"))
+        return _ppt_atom(0xF00D, run)
+
+    def shape(*kids):
+        return _ppt_container(0xF004, [_ppt_atom(0xF00A, bytes(8))]
+                              + list(kids))
+
+    group = [shape()] + [shape(_ppt_atom(0xF00B, bytes(4)), textbox(t))
+                         for t in texts]
+    return _ppt_container(0xF002, [_ppt_atom(0xF008, bytes(8)),
+                                   _ppt_container(0xF003, group),
+                                   shape()])
+
+
+def build_ppt(slides, nested=False):
     """slides: list of lists of text strings (one list per slide).
     Returns .ppt bytes: a PowerPoint Document stream holding a Document
     container (persist id 1), a stale copy of slide 1, one Slide
@@ -346,7 +396,7 @@ def build_ppt(slides):
     fresh = []
     for texts in slides:
         off = len(doc)
-        doc += _ppt_container(PPT_SLIDE, _ppt_slide_kids(texts))
+        doc += _ppt_container(PPT_SLIDE, _ppt_slide_kids(texts, nested))
         fresh.append(off)
     dir0 = struct.pack("<I", (2 << 20) | 1) + struct.pack("<II", doc_off, stale_off)
     dir1 = struct.pack("<I", ((len(fresh) + 1) << 20) | 1) \

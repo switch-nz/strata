@@ -353,16 +353,28 @@ class PptSlideText(unittest.TestCase):
                           "PowerPoint presentation (legacy .ppt): no persist "
                           "directory could be read; no text was read."])
 
-    def test_persist_record_outside_the_stream_is_skipped(self):
+    def test_zero_persist_offset_is_skipped_without_a_finding(self):
+        # [MS-PPT] "File Structure" lists a persist offset of 0 as an
+        # ordinary entry in a real directory, so it is not an error.
         doc, cu = self.doc_and_user(self.raw)
         doc = bytearray(doc)
         # newest directory maps persist id 2 (the second offset after
-        # the info u32) -> offset 0, outside any record
+        # the info u32) -> offset 0
         struct.pack_into("<I", doc, 0x199 + 4 + 4, 0)
         res = parse(rewrap([("PowerPoint Document", doc),
                             ("Current User", cu)]), "t.ppt")
-        # the stale slide at offset 0 is not proven to be the right one;
-        # its record is skipped, the other slide survives.
+        # the stale slide the older directory gives id 2 is not used
+        # (newest wins); the other slide survives.
+        self.assertEqual(res["text"], "Second slide\ncaf\u00e9 utf16")
+        self.assertEqual(res["findings"], [])
+        self.assertNotIn("Outdated stale text.", res["text"])
+
+    def test_persist_offset_beyond_the_stream_is_reported(self):
+        doc, cu = self.doc_and_user(self.raw)
+        doc = bytearray(doc)
+        struct.pack_into("<I", doc, 0x199 + 4 + 4, len(doc) + 1000)
+        res = parse(rewrap([("PowerPoint Document", doc),
+                            ("Current User", cu)]), "t.ppt")
         self.assertEqual(res["text"], "Second slide\ncaf\u00e9 utf16")
         self.assertEqual(res["findings"],
                          ["PowerPoint presentation (legacy .ppt): a persist "
@@ -414,6 +426,174 @@ class PptSlideText(unittest.TestCase):
                          ["PowerPoint presentation (legacy .ppt): the edit "
                           "history is cut short; the remaining edits were "
                           "skipped."])
+
+
+class XlsSharedStringLayout(unittest.TestCase):
+    """XLUnicodeRichExtendedString ([MS-XLS] 2.5.293) from hand-assembled
+    bytes, not the fixture builder: cch, flags, [cRun], [cbExtRst], the
+    characters, and only then rgRun and ExtRst. A reader that skips that
+    data before the characters loses step and garbles every later string,
+    so each case ends with a plain string that must come out intact."""
+
+    @staticmethod
+    def sst(unique, first, *continues):
+        head = struct.pack("<II", unique, unique) + first
+        blob = struct.pack("<HH", officedoc.SST_RECORD, len(head)) + head
+        for body in continues:
+            blob += struct.pack("<HH", officedoc.CONTINUE_RECORD,
+                                len(body)) + body
+        return blob
+
+    @staticmethod
+    def read(blob):
+        findings = []
+        got, end = officedoc._xls_read_sst(blob, 0, findings, "x")
+        return got, end, findings
+
+    PLAIN = struct.pack("<HB", 2, 0) + b"de"
+
+    def test_formatting_runs_follow_the_characters(self):
+        rich = struct.pack("<HBH", 3, 0x08, 2) + b"abc" + b"R" * 8
+        got, _end, findings = self.read(self.sst(2, rich + self.PLAIN))
+        self.assertEqual(got, ["abc", "de"])
+        self.assertEqual(findings, [])
+
+    def test_phonetic_data_follows_the_characters(self):
+        ext = struct.pack("<HBI", 3, 0x04, 6) + b"xyz" + b"P" * 6
+        got, _end, findings = self.read(self.sst(2, ext + self.PLAIN))
+        self.assertEqual(got, ["xyz", "de"])
+        self.assertEqual(findings, [])
+
+    def test_utf16_with_both_runs_and_phonetic_data(self):
+        both = struct.pack("<HBHI", 2, 0x0D, 1, 4) \
+            + "éé".encode("utf-16-le") + b"R" * 4 + b"P" * 4
+        got, _end, findings = self.read(self.sst(2, both + self.PLAIN))
+        self.assertEqual(got, ["éé", "de"])
+        self.assertEqual(findings, [])
+
+    def test_characters_continue_after_a_fresh_flags_byte(self):
+        head = struct.pack("<HB", 6, 0) + b"abc"
+        cont = b"\x00" + b"def" + struct.pack("<HB", 2, 0) + b"gh"
+        got, _end, findings = self.read(self.sst(2, head, cont))
+        self.assertEqual(got, ["abcdef", "gh"])
+        self.assertEqual(findings, [])
+
+    def test_a_continuation_may_change_the_character_width(self):
+        head = struct.pack("<HB", 4, 0) + b"ab"
+        cont = b"\x01" + "éé".encode("utf-16-le")
+        got, _end, findings = self.read(self.sst(1, head, cont))
+        self.assertEqual(got, ["abéé"])
+        self.assertEqual(findings, [])
+
+    def test_formatting_data_spans_a_continue_without_a_flags_byte(self):
+        head = struct.pack("<HBH", 3, 0x08, 2) + b"abc" + b"R" * 4
+        cont = b"R" * 4 + self.PLAIN
+        got, _end, findings = self.read(self.sst(2, head, cont))
+        self.assertEqual(got, ["abc", "de"])
+        self.assertEqual(findings, [])
+
+    def test_a_string_filling_a_record_leaves_the_next_without_flags(self):
+        head = struct.pack("<HB", 2, 0) + b"ab"
+        cont = struct.pack("<HB", 2, 0) + b"cd"
+        got, _end, findings = self.read(self.sst(2, head, cont))
+        self.assertEqual(got, ["ab", "cd"])
+        self.assertEqual(findings, [])
+
+    def test_the_offset_returned_is_past_the_continue_chain(self):
+        blob = self.sst(1, struct.pack("<HB", 2, 0) + b"ab", b"", b"")
+        _got, end, _findings = self.read(blob)
+        self.assertEqual(end, len(blob))
+
+    def test_a_table_naming_more_strings_than_it_holds(self):
+        got, _end, findings = self.read(self.sst(3, self.PLAIN + self.PLAIN))
+        self.assertEqual(got, ["de", "de"])
+        self.assertEqual(findings,
+                         ["x: the shared-string table names more strings "
+                          "than it holds; the rest read as empty."])
+
+    def test_strings_after_rich_and_phonetic_ones_survive_end_to_end(self):
+        sheets = [("S", [("s", 0, 0, ib.Styled("Mixed", runs=2)),
+                         ("s", 0, 1, ib.Styled("Kana", ext=b"\x01" * 6)),
+                         ("s", 0, 2, "After"), ("n", 0, 3, 4)])]
+        res = parse(ib.build_xls(sheets), "t.xls")
+        self.assertEqual(res["text"], "S\nMixed\tKana\tAfter\t4")
+        self.assertEqual(res["findings"], [])
+
+
+class XlsTruncatedRecords(unittest.TestCase):
+    """A record cut short must cost that record, never the whole parse."""
+
+    @staticmethod
+    def rec(rid, body):
+        return struct.pack("<HH", rid, len(body)) + body
+
+    def workbook(self, boundsheet_body):
+        blob = self.rec(officedoc.BOF_RECORD, bytes(16)) \
+            + self.rec(officedoc.BOUNDSHEET_RECORD, boundsheet_body) \
+            + self.rec(officedoc.EOF_RECORD, b"")
+        return ib.build_cfb([("Workbook", blob + bytes(4096 - len(blob)))])
+
+    def test_a_boundsheet_too_short_for_its_name_does_not_fail_the_parse(self):
+        # 6 bytes: lbPlyPos, hsState and dt and nothing more. 7 bytes: the
+        # name's length byte but not its flags byte.
+        for body in (struct.pack("<IBB", 0, 0, 0),
+                     struct.pack("<IBBB", 0, 0, 0, 3)):
+            res = parse(self.workbook(body), "t.xls")
+            self.assertEqual(res["text"], "")
+            self.assertIsInstance(res["metadata"], dict)
+
+    def test_sheet_name_is_read_from_offset_6_of_boundsheet(self):
+        # BoundSheet8 ([MS-XLS] 2.4.28): lbPlyPos (4), hsState (1), dt (1),
+        # then stName at offset 6 -- assembled here by hand, not by the
+        # fixture builder.
+        bof = self.rec(officedoc.BOF_RECORD, bytes(16))
+        eof = self.rec(officedoc.EOF_RECORD, b"")
+        sheet = bof + self.rec(officedoc.NUMBER_RECORD,
+                               struct.pack("<HHHd", 0, 0, 0, 7.0)) + eof
+
+        def bound(lb):
+            return self.rec(officedoc.BOUNDSHEET_RECORD,
+                            struct.pack("<IBB", lb, 0, 0)
+                            + struct.pack("<BB", 4, 0) + b"Data")
+
+        globals_len = len(bof) + len(bound(0)) + len(eof)
+        blob = bof + bound(globals_len) + eof + sheet
+        blob += bytes(4096 - len(blob))
+        res = parse(ib.build_cfb([("Workbook", blob)]), "t.xls")
+        self.assertEqual(res["text"], "Data\n7")
+        self.assertEqual(res["findings"], [])
+
+    def test_an_unforeseen_failure_in_a_body_reader_costs_only_the_text(self):
+        from unittest import mock
+        data = ib.build_xls([("S", [("s", 0, 0, "kept?")])])
+        with mock.patch.object(officedoc, "_xls_body",
+                               side_effect=IndexError("boom")):
+            res = parse(data, "t.xls")
+        self.assertEqual(res["text"], "")
+        self.assertEqual(res["kind"], "Excel workbook (legacy .xls)")
+        self.assertIsInstance(res["metadata"], dict)
+        self.assertEqual(len(res["findings"]), 1)
+        self.assertIn("could not be read", res["findings"][0])
+        self.assertIn("IndexError", res["findings"][0])
+
+
+class PptNestedShapes(unittest.TestCase):
+    """Real slides nest their text a few containers deep, one shape per
+    text box; the walk has to visit the siblings that follow each nested
+    container, not only the first path down."""
+
+    def test_text_in_shapes_after_the_first_container_is_read(self):
+        res = parse(ib.build_ppt([["First shape", "Second shape",
+                                   "Third shape"]], nested=True), "t.ppt")
+        self.assertEqual(res["text"],
+                         "First shape\nSecond shape\nThird shape")
+        self.assertEqual(res["findings"], [])
+
+    def test_every_slide_and_run_in_nested_drawings(self):
+        res = parse(ib.build_ppt([["A1", "A2"], ["B1", "café 中"]],
+                                 nested=True), "t.ppt")
+        self.assertEqual(res["text"], "A1\nA2\n\nB1\ncafé 中")
+        self.assertEqual(res["findings"], [])
 
 
 class Ole2Framing(unittest.TestCase):

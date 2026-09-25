@@ -25,6 +25,23 @@ records, not how the code changed.
   itself against published test vectors (Argon2id, AES-CBC and AES-XTS)
   when it loads, and is not used if any of them fails.
 
+### Fixed
+
+- **Text from legacy Excel and PowerPoint files is now read correctly on
+  real-world files, not only simple ones.** The 0.5.0 readers were checked
+  against 244 files written by real Office and four faults were found and
+  fixed. An Excel workbook whose string table held any rich-text or
+  East Asian phonetic string came out as binary garbage from that string
+  onward; those strings are now skipped over correctly, and text missing
+  from the sample fell from 48% of cells to 12% (the rest is cell types not
+  read yet, chiefly formula results). Sheets now carry their real names
+  instead of "sheet 1", "sheet 2". A sheet record cut short no longer
+  discards the whole workbook's properties. In PowerPoint only the first
+  nested shape group on each slide was visited, so most decks yielded no
+  text; slides with text now yield it (60 of 106 decks, up from 10, the
+  rest having no slide text), and an unused slot in the file's index no
+  longer raises a spurious finding.
+
 ## [0.5.0] - 2026-09-25
 
 A feature release: shadow copies and APFS snapshots can be opened and
