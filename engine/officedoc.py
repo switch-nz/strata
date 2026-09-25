@@ -528,6 +528,8 @@ def _word_body(worddoc, table, findings, label):
         raw = worddoc[off:end]
         try:
             txt = raw.decode("latin-1" if comp else "utf-16-le")
+            if comp:
+                txt = txt.translate(_WORD_ANSI)
         except UnicodeDecodeError:
             findings.append("%s: piece %d is not decodable %s text; it "
                             "was skipped."
@@ -540,7 +542,90 @@ def _word_body(worddoc, table, findings, label):
                             "was skipped." % (label, i, len(txt), span))
             continue
         out.append(txt)
-    return "".join(out).replace("\r", "\n").replace("\x07", "\n")
+    return "".join(out)
+
+# [MS-DOC] FcCompressed: in 8-bit ("compressed") text these bytes stand for
+# these characters (Word's smart quotes, dashes and so on); every other
+# byte is its own code point.
+_WORD_ANSI = {
+    0x82: "\u201a", 0x83: "\u0192", 0x84: "\u201e", 0x85: "\u2026",
+    0x86: "\u2020", 0x87: "\u2021", 0x88: "\u02c6", 0x89: "\u2030",
+    0x8a: "\u0160", 0x8b: "\u2039", 0x8c: "\u0152", 0x91: "\u2018",
+    0x92: "\u2019", 0x93: "\u201c", 0x94: "\u201d", 0x95: "\u2022",
+    0x96: "\u2013", 0x97: "\u2014", 0x98: "\u02dc", 0x99: "\u2122",
+    0x9a: "\u0161", 0x9b: "\u203a", 0x9c: "\u0153", 0x9f: "\u0178",
+}
+
+# Word's special characters in the text stream. Line, page and column
+# breaks and the paragraph and cell marks become newlines; the
+# non-breaking hyphen becomes a hyphen; the optional hyphen and the
+# anchors for pictures, drawn objects and footnote/comment references
+# carry no text and are dropped. Field marks are handled separately.
+_WORD_CHARS = {
+    "\r": "\n", "\x07": "\n", "\x0b": "\n", "\x0c": "\n", "\x0e": "\n",
+    "\x1e": "-",
+}
+_WORD_FIELD_BEGIN, _WORD_FIELD_SEP, _WORD_FIELD_END = "\x13", "\x14", "\x15"
+
+# FibRgLw97 counts, in the order the document parts follow one another in
+# the character-position space ([MS-DOC] FibRgLw97): main text, footnotes,
+# headers and footers, comments, endnotes, text boxes, header text boxes.
+_WORD_STORIES = ("document", "footnotes", "headers", "comments", "endnotes",
+                 "text boxes", "header text boxes")
+
+
+def _word_clean(text):
+    """The text as Word displays it: a field shows its result and not its
+    instruction (`HYPERLINK "..."`, `PAGE`, `FORMTEXT`), and the special
+    characters are mapped as _WORD_CHARS says. A field mark that has no
+    partner is ignored rather than allowed to hide the text after it."""
+    out, fields = [], []      # fields: True while inside an instruction
+    for ch in text:
+        if ch == _WORD_FIELD_BEGIN:
+            fields.append(True)
+        elif ch == _WORD_FIELD_SEP:
+            if fields:
+                fields[-1] = False
+        elif ch == _WORD_FIELD_END:
+            if fields:
+                fields.pop()
+        elif any(fields):
+            continue
+        elif ch in _WORD_CHARS:
+            out.append(_WORD_CHARS[ch])
+        elif ch >= " " or ch == "\t":
+            out.append(ch)
+    return "".join(out)
+
+
+def _word_sections(worddoc, text):
+    """Split the piece-table text into its document parts by the FIB's
+    character counts, and clean each. When the counts do not account for
+    the text (or the piece table lost pieces, so positions no longer
+    line up) the whole text is one section rather than mislabelled."""
+    sections = [("document", text)]
+    if len(worddoc) >= 0x6C:
+        text_c, ftn, hdd, _r, atn, edn, txbx, hdr_txbx = struct.unpack_from(
+            "<8i", worddoc, 0x4C)
+        counts = [text_c, ftn, hdd, atn, edn, txbx, hdr_txbx]
+        total = sum(counts)
+        if all(c >= 0 for c in counts) and 0 < total <= len(text) \
+                and len(text) - total <= 1:
+            sections, at = [], 0
+            for name, n in zip(_WORD_STORIES, counts):
+                if n:
+                    sections.append((name, text[at:at + n]))
+                    at += n
+            if at < len(text) and sections:    # the final paragraph mark
+                name, last = sections[-1]
+                sections[-1] = (name, last + text[at:])
+    out = []
+    for name, part in sections:
+        part = _word_clean(part).rstrip("\n")
+        if part.strip():
+            out.append((name, part))
+    return out
+
 
 BOF_RECORD = 0x0809
 SST_RECORD = 0x00FC
@@ -982,14 +1067,24 @@ def parse_ole2_document(data, name=""):
     if kind == "Word document (legacy .doc)":
         worddoc = o.read(names["worddocument"], MAX_PART)
         table = None
-        for tname in ("1table", "0table"):
-            tent = names.get(tname)
-            if tent is not None:
-                table = o.read(tent, MAX_PART)
-                break
+        # The FIB's fWhichTblStm names the table stream; a file can hold
+        # both 0Table and 1Table (an earlier save's copy is left behind),
+        # and reading the wrong one gives a stale or unusable piece table.
+        named = "1table" if len(worddoc) > 0x0B \
+            and struct.unpack_from("<H", worddoc, 0x0A)[0] & 0x0200 \
+            else "0table"
+        other = "0table" if named == "1table" else "1table"
+        tent = names.get(named)
+        if tent is None and names.get(other) is not None:
+            tent = names[other]
+            findings.append("%s: the file header names the %s stream but "
+                            "only %s exists; it was read instead."
+                            % (kind, named, other))
+        if tent is not None:
+            table = o.read(tent, MAX_PART)
         txt = _guarded(_word_body, findings, kind, worddoc, table)
         if txt.strip():
-            sections.append(("document", txt))
+            sections.extend(_word_sections(worddoc, txt))
     elif kind == "Excel workbook (legacy .xls)":
         sent = names.get("workbook") or names.get("book")
         txt = _guarded(_xls_body, findings, kind, o.read(sent, MAX_PART))

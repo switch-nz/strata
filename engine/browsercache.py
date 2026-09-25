@@ -38,6 +38,11 @@ def classify(e):
     """
     name = (e.get("name") or "").lower()
     path = (e.get("path") or "").lower()
+    if "code cache" in path.replace("\\", "/").split("/"):
+        # Chromium's V8 compiled-code cache uses the same on-disk formats
+        # as the HTTP cache but holds no web content, only script bytecode
+        # keyed by script URL.
+        return None
     if name == "the-real-index" or "index-dir/the-real-index" in path:
         return "index"
     if "cache" in path:
@@ -74,6 +79,32 @@ def _split_http_headers(blob):
     return status, content_type, None
 
 
+_KEY_URL_RE = re.compile(r"^[a-z][a-z0-9+.-]*:", re.I)
+
+
+def _chromium_key_url(key):
+    """The resource URL in a Chromium HTTP cache key, as Chromium's own
+    HttpCache::GetResourceURLFromHttpCacheKey reads it. The key is
+    ``credential_key/upload_id/[isolation_key]url``; an entry stored under
+    a partitioned cache has an isolation key that starts ``_dk_`` and ends
+    at the last space (a URL never holds an unescaped space). Keys that
+    are not in that form (a bare URL from an older cache, or the numeric
+    ids used by the service worker script cache) give None."""
+    if re.match(r"^(?:https?|ftp|file|wss?)://", key):
+        return key
+    first = key.find("/")
+    second = key.find("/", first + 1) if first >= 0 else -1
+    if second < 0:
+        return None
+    rest = key[second + 1:]
+    if rest.startswith("_dk_"):
+        space = rest.rfind(" ")
+        if space < 0:
+            return None
+        rest = rest[space + 1:]
+    return rest if _KEY_URL_RE.match(rest) else None
+
+
 def parse_simple_entry(data):
     """Chromium Simple Cache ``_0`` stream -> row or None.
 
@@ -91,7 +122,7 @@ def parse_simple_entry(data):
     head_end = _SIMPLE_HDR.size + key_length
     if len(data) < head_end:
         return None
-    url = data[_SIMPLE_HDR.size:head_end].decode("utf-8", "replace")
+    key = data[_SIMPLE_HDR.size:head_end].decode("utf-8", "replace")
     if len(data) < _SIMPLE_EOF.size:
         return None
     final_magic, flags, _, stream0_size, _ = _SIMPLE_EOF.unpack_from(
@@ -105,8 +136,11 @@ def parse_simple_entry(data):
         return None
     stream0 = data[block_end - stream0_size:block_end] if stream0_size else b""
     status, content_type, note = _split_http_headers(stream0)
+    url = _chromium_key_url(key)
+    if url is None:
+        note = "key has no URL: %s" % key
     return {
-        "url": url, "key": None, "status": status,
+        "url": url, "key": key, "status": status,
         "content_type": content_type,
         "last_modified": None, "last_fetched": None,
         "fetched_count": None, "source": "chromium", "note": note,
