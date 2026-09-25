@@ -340,17 +340,17 @@ class StaleBrowserResults(unittest.TestCase):
         self.assertEqual(list(got["items"]), ["browser:0"])
         self.assertEqual(got["dropped"], [])
 
-    def test_a_version_3_browser_result_is_dropped_and_logged(self):
+    def test_a_version_4_browser_result_is_dropped_and_logged(self):
         self.case.save_artefact(1, 0, "browser", {"cache": [{"url": "0"}]})
         self.case.db.execute(
-            "UPDATE artefacts SET parser_version=3 WHERE kind='browser'")
+            "UPDATE artefacts SET parser_version=4 WHERE kind='browser'")
         self.case.db.commit()
         got = self.case.artefacts(1)
         self.assertEqual(got["items"], {})
         self.assertEqual(got["dropped"],
-                         [{"kind": "browser", "part": 0, "was": 3,
+                         [{"kind": "browser", "part": 0, "was": 4,
                            "now": casedb.ARTEFACT_VERSION["browser"]}])
-        self.assertEqual(casedb.ARTEFACT_VERSION["browser"], 4)
+        self.assertEqual(casedb.ARTEFACT_VERSION["browser"], 5)
         self.assertIn("artefact.reset", actions(self.case))
 
 

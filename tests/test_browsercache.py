@@ -91,6 +91,22 @@ class ParseSimple(unittest.TestCase):
         self.assertIn("no HTTP headers", r["note"])
 
 
+class StatusLine(unittest.TestCase):
+
+    def test_an_http_slash_inside_a_header_is_not_the_status_line(self):
+        head = (b"HTTP/1.0 404 Not Found\r\n"
+                b"Server: BaseHTTP/0.6 Python/3\r\n"
+                b"Content-Type: text/plain\r\n\r\n")
+        r = bc.parse_simple_entry(simple_entry(headers=head))
+        self.assertEqual(r["status"], 404)
+        self.assertEqual(r["content_type"], "text/plain")
+
+    def test_http2_status_line_without_a_reason_phrase(self):
+        r = bc.parse_simple_entry(simple_entry(
+            headers=b"HTTP/1.1 304\r\nContent-Type: text/css\r\n\r\n"))
+        self.assertEqual(r["status"], 304)
+
+
 class ChromiumKeys(unittest.TestCase):
     """Chromium HTTP cache keys are ``credential_key/upload_id/
     [isolation_key]url`` (net/http/http_cache.cc), and a partitioned

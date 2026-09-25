@@ -334,7 +334,7 @@ def index_layout(conn, schema="main"):
     return None
 
 ARTEFACT_VERSION = {
-    "browser": 4, "recyclebin": 1, "lnk": 2, "appcompat": 1, "prefetch": 1,
+    "browser": 5, "recyclebin": 1, "lnk": 2, "appcompat": 1, "prefetch": 1,
     "shellbags": 1, "mail": 1, "leveldb": 1, "vss": 1, "usn": 1,
     "carve": 1, "timeline": 1, "evtx": 1, "wallets": 1,
 }

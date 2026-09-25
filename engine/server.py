@@ -2955,10 +2955,6 @@ class Handler(BaseHTTPRequestHandler):
 
             def run(progress):
                 found, history, downloads, cookies = [], [], [], []
-                cache = []
-                cache_skipped = 0
-                cache_blockfile = 0
-                cache_index = False
                 entries = filesearch_mod.collect(fs, root)
                 total = max(1, len(entries))
                 for i, e in enumerate(entries):
@@ -2966,26 +2962,8 @@ class Handler(BaseHTTPRequestHandler):
                         progress(i / total)
                     if e.get("is_dir") or not (e.get("size") or 0):
                         continue
-                    ck = browsercache_mod.classify(e)
-                    if ck == "blockfile":
-                        cache_blockfile += 1
-                        continue
-                    if ck == "index":
-                        cache_index = True
-                        continue
-                    if ck:
-                        try:
-                            row = browsercache_mod.parse_entry(
-                                fs.read_file(e, browsercache_mod.READ_CAP), e)
-                        except Exception:
-                            row = None
-                        if row is None:
-                            cache_skipped += 1
-                        elif len(cache) < 20000:
-                            cache.append(row)
-                        else:
-                            cache_skipped += 1
-                        continue
+                    if browsercache_mod.classify(e):
+                        continue                  # read by collect() below
                     nm = (e.get("name") or "").lower()
                     if not (nm in ("history", "places.sqlite", "cookies",
                                    "web data", "login data", "downloads.sqlite")
@@ -3025,6 +3003,8 @@ class Handler(BaseHTTPRequestHandler):
                             r["product"] = product
                             r["db"] = e.get("path")
                             history.append(r)
+                got = browsercache_mod.collect(fs, entries)
+                cache, cache_skipped = got["rows"], got["skipped"]
                 cache.sort(key=lambda c: c.get("last_modified")
                            or c.get("last_fetched") or "", reverse=True)
                 history.sort(key=lambda r: r.get("visited_at") or "",
@@ -3032,22 +3012,7 @@ class Handler(BaseHTTPRequestHandler):
                 progress(1.0)
                 cookies.sort(key=lambda c: (c.get("host") or "",
                                             c.get("name") or ""))
-                cache_findings = []
-                if cache_blockfile:
-                    cache_findings.append(
-                        "Legacy Chromium blockfile cache found (%d file%s "
-                        "under a Cache data directory); its entries were not "
-                        "parsed." % (cache_blockfile,
-                                     "" if cache_blockfile == 1 else "s"))
-                if cache_index:
-                    cache_findings.append(
-                        "A Chromium cache index (index-dir/the-real-index) is "
-                        "present; entry files were read directly and the index "
-                        "was not parsed.")
-                if cache_skipped:
-                    cache_findings.append(
-                        "%d cache entry file%s could not be read or parsed."
-                        % (cache_skipped, "" if cache_skipped == 1 else "s"))
+                cache_findings = got["findings"]
                 return {"databases": found, "history": history[:20000],
                         "downloads": downloads,
                         "cookies": cookies[:20000],
