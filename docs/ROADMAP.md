@@ -88,15 +88,19 @@ recognised and refused by name today; these entries are about *reading* it.
 - [~] **Browser disk cache** — Chromium Simple Cache and Firefox cache2
       entries are read (URL, status, content type, times, fetch count),
       separate from the history databases. The Chromium blockfile cache and
-      index are recognised and counted, not parsed. Tested on synthetic
-      entries only so far.
+      index are recognised and counted, not parsed, and real Chrome and Edge
+      on Windows wrote only that format for web content in testing, so today
+      this lists little there. Checked against real Chrome output (its
+      service worker script cache) and synthetic entries; Firefox cache2 is
+      synthetic only so far.
 - [ ] **Event ID descriptions**, and timelining across logs.
 - [ ] **PST:** ANSI (32-bit) files are refused today; OST-specific
       structures are not handled.
 - [~] **Legacy Office body text** — Word's piece table, Excel's BIFF stream
       and PowerPoint's records are decoded, and whatever cannot be proven from
-      the file is a finding rather than a guess. Tested on synthetic files
-      only so far.
+      the file is a finding rather than a guess. Checked against nearly 400
+      files written by real Office; Excel formula, boolean and error cells
+      are not read yet, and Word 6/95 files are refused.
 
 ---
 

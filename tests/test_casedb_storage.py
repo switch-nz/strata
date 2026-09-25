@@ -320,5 +320,39 @@ class KeepArtefact(unittest.TestCase):
         self.assertEqual(json.loads(row["payload"]), {"present": False})
 
 
+class StaleBrowserResults(unittest.TestCase):
+    """A Browser result saved before the Chromium row changes (parser
+    version 3, as 0.5.0 wrote it) is dropped and logged when saved results
+    are next loaded, so the examiner runs it again and gets the corrected
+    rows; a current one is kept."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.case = Case(os.path.join(self.tmp, "c.strata"), name="c")
+
+    def tearDown(self):
+        self.case.close()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_the_current_browser_version_is_kept(self):
+        self.case.save_artefact(1, 0, "browser", {"cache": []})
+        got = self.case.artefacts(1)
+        self.assertEqual(list(got["items"]), ["browser:0"])
+        self.assertEqual(got["dropped"], [])
+
+    def test_a_version_3_browser_result_is_dropped_and_logged(self):
+        self.case.save_artefact(1, 0, "browser", {"cache": [{"url": "0"}]})
+        self.case.db.execute(
+            "UPDATE artefacts SET parser_version=3 WHERE kind='browser'")
+        self.case.db.commit()
+        got = self.case.artefacts(1)
+        self.assertEqual(got["items"], {})
+        self.assertEqual(got["dropped"],
+                         [{"kind": "browser", "part": 0, "was": 3,
+                           "now": casedb.ARTEFACT_VERSION["browser"]}])
+        self.assertEqual(casedb.ARTEFACT_VERSION["browser"], 4)
+        self.assertIn("artefact.reset", actions(self.case))
+
+
 if __name__ == "__main__":
     unittest.main()

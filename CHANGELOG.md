@@ -11,6 +11,17 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-25
+
+A fix release for the legacy Office and browser-cache readers shipped in
+0.5.0, which were checked against real files for the first time and
+corrected, plus an optional native crypto module for much faster
+encrypted-volume work. Upgrade from 0.5.0. A Browser result saved by 0.5.0
+is discarded the next time the exhibit's saved results are loaded
+(recorded in the audit log as `artefact.reset`) and must be run again,
+since it listed script bytecode and unusable addresses as cached pages;
+nothing else in an existing case needs redoing.
+
 ### Changed
 
 - **Encrypted-volume unlock and reading are much faster when the optional
@@ -750,7 +761,8 @@ Corroborate results in these areas with another tool before relying on them.
   ([#15](https://github.com/switch-nz/strata/issues/15),
   [#19](https://github.com/switch-nz/strata/issues/19)).
 
-[Unreleased]: https://github.com/switch-nz/strata/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/switch-nz/strata/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/switch-nz/strata/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/switch-nz/strata/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/switch-nz/strata/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/switch-nz/strata/compare/v0.2.0...v0.3.0
