@@ -1,0 +1,30 @@
+name: Release
+
+# A version bump on main cuts its tag and GitHub release at the same time.
+# Idempotent (an existing tag is left alone) and refuses to publish without a
+# dated changelog section for the version; see .github/scripts/release.sh.
+on:
+  push:
+    branches: [main]
+    paths: [engine/version.py]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Tag and publish the release for this version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: bash .github/scripts/release.sh
