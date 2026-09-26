@@ -95,8 +95,9 @@ recognised and refused by name today; these entries are about *reading* it.
       cache2 (synthetic only), and doomed, evicted or freed-block blockfile
       entries (synthetic tests only, no real cache that had entries evicted).
 - [ ] **Event ID descriptions**, and timelining across logs.
-- [ ] **PST:** ANSI (32-bit) files are refused today; OST-specific
-      structures are not handled.
+- [~] **PST:** ANSI (32-bit) files are read, from the layouts in [MS-PST]
+      and synthetic files built from them; no real ANSI file has been
+      checked yet. OST-specific structures are not handled.
 - [~] **Legacy Office body text** — Word's piece table, Excel's BIFF stream
       and PowerPoint's records are decoded, and whatever cannot be proven from
       the file is a finding rather than a guess. Checked against nearly 400

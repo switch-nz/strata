@@ -201,6 +201,26 @@ def _blockfile_seed():
     return files["data_1"] + files["data_2"]
 
 
+def run_pst(data):
+    """Open, list every folder and message, and read attachment content."""
+    from engine import pst
+    p = pst.open_pst(data)
+    if p is None:
+        return
+    mail = p.mail(limit=50)
+    for m in mail["messages"][:5]:
+        node = p.nbt().get(m["nid"])
+        for a in m["attachments"][:3]:
+            p.attachment_bytes(node, a["nid"])
+
+
+def _pst_seed(ansi, **kw):
+    import imagebuild_pst
+    return imagebuild_pst.build_store(ansi=ansi, tree_levels=2,
+                                      sub_split=True, attachment_count=2,
+                                      **kw).raw
+
+
 def run_blockfile(data):
     import test_blockfilecache as t
     from engine import browsercache
@@ -255,6 +275,9 @@ def targets():
     out["reglog"] = (lambda: imagebuild_registry.build_dirty_pair()[1],
                      run_reglog)
     out["blockfile"] = (_blockfile_seed, run_blockfile)
+    out["pst"] = (lambda: _pst_seed(False, attachment=b"z" * 9000), run_pst)
+    out["pst-ansi"] = (lambda: _pst_seed(True, attachment=b"z" * 9000),
+                       run_pst)
     out["ewf"] = (lambda: imagebuild_ewf.build_e01()[0], run_ewf)
     out["vmdk-sparse"] = (imagebuild_vmdk.build_sparse, run_vmdk)
     out["vmdk-stream"] = (lambda: imagebuild_vmdk.build_stream_optimized()[0],
