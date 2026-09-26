@@ -11,6 +11,27 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+### Added
+
+- **ANSI (32-bit) PST files are read.** These are the files Outlook 97 to 2002
+  wrote; they were refused outright. Folders, messages, attachment names and
+  content now come out the same as for a Unicode PST. Text in an ANSI file is
+  stored in a code page, so it is decoded with the code page each message
+  declares, or Windows-1252 where none is given, and the file's finding says
+  so. Checked against the published layouts and synthetic files only: no real
+  ANSI file has been tried yet, so corroborate results with another tool.
+
+### Fixed
+
+- **PST files using cyclic encoding were read as garbage.** The "high
+  encryption" method used a different calculation from the published one, so
+  every block in such a file decoded wrongly. It now follows the published
+  algorithm.
+- **A damaged PST could crash the mail listing.** A folder name of the wrong
+  type, or a B-tree entry too short to hold its fields, raised an error
+  instead of being skipped. Found by fuzzing, which now covers PST files of
+  both formats.
+
 ## [0.6.0] - 2026-09-26
 
 Adds the reader for the browser cache that Chrome and Edge on Windows

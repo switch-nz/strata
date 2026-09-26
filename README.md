@@ -150,8 +150,8 @@ separate from the tool's suggestions, and never promotes one to the other.
 
 ## Not implemented
 
-EWF v2 (Ex01), FileVault, BitLocker with the Elephant diffuser, ANSI PST,
-`$LogFile`, and carving across fragments.
+EWF v2 (Ex01), FileVault, BitLocker with the Elephant diffuser, OST-specific
+structures, `$LogFile`, and carving across fragments.
 
 ---
 
