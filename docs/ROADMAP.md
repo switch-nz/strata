@@ -91,7 +91,9 @@ recognised and refused by name today; these entries are about *reading* it.
       history databases. Blockfile entries come from the cache files rather
       than the index, so dropped entries are found and marked. Bodies are not
       read. Checked against real Chrome and Edge caches (blockfile) and Chrome's
-      service worker script cache; Firefox cache2 is synthetic only so far.
+      service worker script cache. Not yet checked on real data: Firefox
+      cache2 (synthetic only), and doomed, evicted or freed-block blockfile
+      entries (synthetic tests only, no real cache that had entries evicted).
 - [ ] **Event ID descriptions**, and timelining across logs.
 - [ ] **PST:** ANSI (32-bit) files are refused today; OST-specific
       structures are not handled.
