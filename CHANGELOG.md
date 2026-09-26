@@ -11,6 +11,16 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-26
+
+Adds reading of ANSI (32-bit) PST files and corrects how PST files that use
+the cyclic ("high") encoding are decoded, which was wrong for Unicode files
+as well. Upgrade from 0.6.0. A Mail result saved by 0.6.0 is discarded the
+next time the exhibit's saved results are loaded (recorded in the audit log
+as `artefact.reset`) and must be run again, since it listed such stores as
+unreadable or decoded them wrongly; nothing else in an existing case needs
+redoing.
+
 ### Added
 
 - **ANSI (32-bit) PST files are read.** These are the files Outlook 97 to 2002
@@ -810,7 +820,8 @@ Corroborate results in these areas with another tool before relying on them.
   ([#15](https://github.com/switch-nz/strata/issues/15),
   [#19](https://github.com/switch-nz/strata/issues/19)).
 
-[Unreleased]: https://github.com/switch-nz/strata/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/switch-nz/strata/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/switch-nz/strata/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/switch-nz/strata/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/switch-nz/strata/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/switch-nz/strata/compare/v0.4.0...v0.5.0
