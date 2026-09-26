@@ -353,6 +353,21 @@ class StaleBrowserResults(unittest.TestCase):
         self.assertEqual(casedb.ARTEFACT_VERSION["browser"], 5)
         self.assertIn("artefact.reset", actions(self.case))
 
+    def test_a_version_1_mail_result_is_dropped_and_logged(self):
+        # 0.6.1 read ANSI PSTs and fixed cyclic decoding, so a Mail result
+        # saved before it lists those stores wrongly.
+        self.case.save_artefact(1, 0, "mail", {"messages": []})
+        self.case.db.execute(
+            "UPDATE artefacts SET parser_version=1 WHERE kind='mail'")
+        self.case.db.commit()
+        got = self.case.artefacts(1)
+        self.assertEqual(got["items"], {})
+        self.assertEqual(got["dropped"],
+                         [{"kind": "mail", "part": 0, "was": 1,
+                           "now": casedb.ARTEFACT_VERSION["mail"]}])
+        self.assertEqual(casedb.ARTEFACT_VERSION["mail"], 2)
+        self.assertIn("artefact.reset", actions(self.case))
+
 
 if __name__ == "__main__":
     unittest.main()
