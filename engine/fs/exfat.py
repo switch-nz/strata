@@ -302,6 +302,19 @@ class ExfatFS:
             remaining -= length
         return out
 
+    @staticmethod
+    def _past_valid_data(entry, off, data):
+        """data (read from `off`) with every byte at or past the stream's
+        valid data length replaced by zeros, as the driver returns them."""
+        valid = entry.get("valid_size")
+        if valid is None or entry.get("is_dir"):
+            return data
+        cut = valid - off
+        if cut >= len(data):
+            return data
+        cut = max(0, cut)
+        return data[:cut] + bytes(len(data) - cut)
+
     def read_file(self, entry, max_bytes=None, stream=""):
         if stream:
             raise UnsupportedStream("exFAT", stream)
@@ -315,7 +328,7 @@ class ExfatFS:
                 break
             out += self.source.read_at(r["offset"],
                                        min(r["length"], limit - len(out)))
-        return bytes(out[:limit])
+        return self._past_valid_data(entry, 0, bytes(out[:limit]))
 
     def read_range(self, entry, off, length, stream=""):
         if stream:
@@ -323,8 +336,9 @@ class ExfatFS:
         size = entry["size"]
         if not entry.get("start_cluster") or not size:
             return b""
-        return read_runs(self.source, self.runs(entry), off,
-                         min(length, max(0, size - off)))
+        return self._past_valid_data(
+            entry, off, read_runs(self.source, self.runs(entry), off,
+                                  min(length, max(0, size - off))))
 
     def slack(self, entry):
         if entry["is_dir"] or not entry["size"]:
@@ -352,8 +366,10 @@ class ExfatFS:
                     entry["valid_size"] < entry["size"]:
                 info["note"] = (
                     "Valid data length (%d) is shorter than the file size (%d). "
-                    "The bytes between are stale content the allocator never "
-                    "cleared." % (entry["valid_size"], entry["size"]))
+                    "Bytes after it were never written by this file and read "
+                    "as zeros, as the driver returns them; the clusters there "
+                    "still hold whatever was on disk before, which the runs "
+                    "below point at." % (entry["valid_size"], entry["size"]))
             if entry.get("deleted"):
                 info["recovery"] = (
                     "Directory entry deleted. This file was flagged contiguous, "

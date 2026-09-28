@@ -132,10 +132,12 @@ def render(data, evidence_detail=None, tz=None, index_status=None):
                    % (_t("report.audit.intact"),
                       _t("report.audit.intact_detail", len(audit))))
     else:
-        out.append("<b>%s</b><span>%s</span>"
+        out.append("<b>%s</b><span>%s%s</span>"
                    % (_t("report.audit.broken"),
                       _t("report.audit.broken_detail",
-                         _e(integ.get("broken_at")))))
+                         _e(integ.get("broken_at"))),
+                      (" " + _e(integ["detail"])) if integ.get("detail")
+                      else ""))
     out.append("</div>")
 
     out.append("<dl class=kv>")

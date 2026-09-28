@@ -2577,16 +2577,22 @@ class Handler(BaseHTTPRequestHandler):
             if not terms:
                 return self._send(400, {"error": _t("server.search.enter_least_one_term")})
             encs = body.get("encodings", ["ascii", "utf-16le"])
+            if not encs:
+                return self._send(400, {"error": _t("server.search.no_encoding")})
             rx = bool(body.get("regex"))
 
             def run(progress):
+                cov = {}
                 hits = profile_mod.search(src, terms, encodings=encs, regex=rx,
                                           case_sensitive=body.get("case_sensitive",
                                                                   False),
-                                          progress=progress)
+                                          progress=progress, coverage=cov)
                 s.case.log("search.run", {"terms": terms, "encodings": encs,
-                                          "regex": rx, "hits": len(hits)})
-                return {"hits": hits, "base": part or 0}
+                                          "regex": rx, "hits": len(hits),
+                                          "truncated": cov["truncated"]})
+                return {"hits": hits, "base": part or 0,
+                        "truncated": cov["truncated"],
+                        "complete_to": cov["complete_to"]}
             return self._send(200, s.start_task("Search evidence", run))
 
         if path == "/api/timeline":
@@ -3698,16 +3704,23 @@ class Handler(BaseHTTPRequestHandler):
             def run(progress):
                 targets = hashing_mod.collect_scope(
                     fs, root, scope, entry, body.get("filters"))
-                rows = hashing_mod.hash_many(fs, targets, progress=progress)
+                failed = []
+                rows = hashing_mod.hash_many(fs, targets, progress=progress,
+                                             failures=failed)
                 hashing_mod.annotate_matches(s.case, rows)
                 s.case.record_hashes(s.evidence_id, rows, part)
+                if failed:
+                    s.case.log("hash.failed", {"part": part,
+                                               "count": len(failed),
+                                               "files": failed[:200]})
                 counts = {}
                 for r in rows:
                     if r.get("match_kind"):
                         counts[r["match_kind"]] = counts.get(r["match_kind"], 0) + 1
                 return {"hashed": len(rows), "rows": rows[:2000],
                         "match_counts": counts,
-                        "truncated": len(rows) > 2000}
+                        "truncated": len(rows) > 2000,
+                        "failed": len(failed), "failures": failed[:200]}
 
             t = s.start_task("hash", run, label="Hashing files",
                               detail="MD5, SHA-1, SHA-256 and a fuzzy hash "
@@ -4537,7 +4550,7 @@ class _Server(ThreadingHTTPServer):
         self.server_port = port
 
 def serve(host="127.0.0.1", port=8722, image=None, examiner=None,
-          read_only=False):
+          read_only=False, on_ready=None):
     global READ_ONLY
     READ_ONLY = bool(read_only)
     if image:
@@ -4547,6 +4560,13 @@ def serve(host="127.0.0.1", port=8722, image=None, examiner=None,
     print("Strata engine listening on http://%s:%d" % (host, port))
     if image:
         print("Evidence: %s" % image)
+    if on_ready is not None:
+        # The socket is bound and listening, so a request made now queues
+        # until serve_forever() picks it up rather than being refused.
+        try:
+            on_ready(host, port)
+        except Exception:
+            pass
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -4617,6 +4637,8 @@ def _triage(s):
             if not p.get("allocated"):
                 gap_bytes += p.get("size") or 0
                 continue
+            if p.get("container"):
+                continue            # its logical partitions are listed
             det = p.get("detected")
             if det in ("BitLocker", "LUKS"):
                 enc.append({"exhibit": ev.label, "slot": p["slot"],

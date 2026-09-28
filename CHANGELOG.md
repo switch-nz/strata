@@ -13,6 +13,97 @@ records, not how the code changed.
 
 ### Fixed
 
+- **Entries removed from the end of the audit log went unnoticed.** Deleting
+  the newest entries, or all of them, still verified as intact. The case now
+  records its last entry alongside the log, and each new entry chains from
+  that record, so entries cut from the end are reported as a break (with
+  what is missing) even after more entries have been written. Cases from
+  earlier versions start recording from their next entry.
+- **Two Strata instances on one case folder could break the audit chain.**
+  Both could chain a new entry from the same previous one, which then
+  verified as tampered although nothing had been altered. Writing an entry
+  now takes the case database's write lock first, so entries from any number
+  of instances form one chain.
+
+- **The core sample judged each band of the strip on its first 4 KB.** On
+  a large disk each band covers hundreds of megabytes, so a band that began
+  with zeros and held encrypted data further in was drawn as zeroed. Anything
+  up to 64 MB is now read and classified in full; above that, each band is
+  classified from sixteen reads spread evenly across it. How much was read
+  is shown beneath the strip ("all read", or a percentage, with the detail on
+  hover), and the README now describes what is actually done.
+
+- **Logical partitions on MBR disks were not listed.** Only the four primary
+  entries of an MBR were read, so the volumes in an extended partition (the
+  logical drives on many older Windows and Linux disks) never appeared; the
+  extended partition showed as one volume with no filesystem. The chain of
+  extended boot records is now followed and each logical partition is listed
+  as MBR 5, MBR 6 and so on, and can be opened like any other volume. The
+  extended partition is shown as their container, space inside it that no
+  logical partition uses is shown as unused, and a broken or looping chain is
+  reported as a finding.
+
+- **NTFS and exFAT files returned stale disk content past their valid data
+  length.** A file's valid data length marks where the data it actually
+  wrote ends; Windows reads everything after it as zeros. Strata returned
+  whatever the clusters held there, usually part of an earlier file, as this
+  file's content, so previews, searches, exports and hashes differed from
+  Windows and other tools. Those bytes now read as zeros. The file's details
+  give the valid data length, and the runs still lead to the stale bytes in
+  the hex view. **Hashes of such files change:** hashes stored in a case
+  before this version keep their old values until the files are hashed again.
+
+- **"Hash every file" left out files it could not read, and said nothing.**
+  A file whose content could not be read was dropped from the results, and
+  the count of hashed files gave no sign of it. Such files are now listed
+  under "not hashed" with the reason, counted in the summary, and recorded in
+  the audit log as `hash.failed`.
+- **Hashing a very large file could run out of memory.** Each file was read
+  whole before it was hashed. Files are now read and hashed 4 MB at a time,
+  so memory use no longer depends on file size. The digests, including the
+  fuzzy hash, are unchanged.
+
+- **Regular-expression searches never looked at UTF-16LE text.** With Regex
+  ticked, the encoding boxes were ignored and only single-byte text was
+  searched, in raw media and in file contents alike, while the empty-result
+  hint still suggested ticking UTF-16LE. A regex is now matched against
+  UTF-16LE text too (at either byte alignment) when that box is ticked, and
+  each hit says which encoding it was found in.
+- **A raw search that reached its 5,000-hit limit stopped without saying
+  so.** It now says the limit was reached and gives the offset up to which
+  the results are complete. Terms later in the list are no longer the ones
+  that lose out when the limit is reached.
+
+- **A FAT file could be listed under another file's long name.** Long-name
+  entries left behind by a deleted file were attached to whatever short entry
+  followed them, so a live `B.TXT` could appear as the deleted file's long
+  name. Long names are now attached only when their checksum matches the
+  short name they were written for; one that doesn't is not shown against
+  any file.
+
+- **A single raw file with a numeric extension was reported as an incomplete
+  split set.** Opening `capture.2024` on its own said piece `capture.0001` was
+  missing and that the image started partway through a disk. With no other
+  piece beside it, the finding now says only that the file is named like a
+  piece and is read as a single image.
+
+- **`--browser` opened the browser before the interface was listening**, so
+  a fast browser could show "connection refused". It now opens once the port
+  is accepting connections, and it also works with `--host 0.0.0.0` (it opens
+  the interface on loopback). `--help` now describes the program and no
+  longer lists Ex01, which is not read. `--read-only` is in the README.
+
+- **A search for several terms lost hits where two terms matched at the same
+  place.** Searching raw media for `pass` and `password` together reported
+  only the `pass` hit wherever `password` appeared, so the longer term's hits
+  were missing from the results and the saved search. Every term's hit is now
+  kept.
+- **Sparse NTFS files whose holes were larger than the volume read back
+  empty.** A hole in a sparse file takes no space on disk and can span more
+  clusters than the volume holds, but it was treated as a damaged run: the
+  file's content after it was dropped and a finding wrongly said the run list
+  was corrupt. Holes are now read as zeros whatever their length; a run that
+  occupies clusters is still checked against the volume.
 - **NTFS: a file whose attributes overflowed into another MFT record was
   also listed as a bogus file of its own**, named `<record number>` since it
   has no `$FILE_NAME`, cluttering the root of the filesystem tree. This

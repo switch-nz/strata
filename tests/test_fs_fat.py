@@ -418,5 +418,50 @@ class FatRobustness(unittest.TestCase):
                         fs.stat(e)
 
 
+class LongNameChecksum(unittest.TestCase):
+    """Long-name entries carry the checksum of the short name they were
+    written for; entries left over from another file are not attached."""
+
+    def volume_with(self, *entries):
+        data = bytearray(build.build_fat(16))
+        fs = fat.FatFS(BytesImage(data))
+        raw, base = fs._read_dir_bytes(0)
+        free = next(i for i in range(0, len(raw), 32) if raw[i] == 0)
+        blob = b"".join(entries)
+        data[base + free:base + free + len(blob)] = blob
+        fs = fat.FatFS(BytesImage(data))
+        return {e["short_name"]: e for e in fs.listdir(0)}
+
+    def test_orphaned_deleted_long_name_is_not_given_to_a_live_file(self):
+        got = self.volume_with(
+            *build.lfn_entries("Old secret plan.txt", b"OLDSEC~1TXT",
+                               deleted=True),
+            build.short_entry(b"B       TXT", 0x20, 0, 0))
+        self.assertEqual(got["B.TXT"]["name"], "B.TXT")
+
+    def test_live_long_name_after_orphaned_entries_is_kept(self):
+        got = self.volume_with(
+            *build.lfn_entries("Old secret plan.txt", b"OLDSEC~1TXT",
+                               deleted=True),
+            *build.lfn_entries("New notes.txt", b"NEWNOT~1TXT"),
+            build.short_entry(b"NEWNOT~1TXT", 0x20, 0, 0))
+        self.assertEqual(got["NEWNOT~1.TXT"]["name"], "New notes.txt")
+
+    def test_long_name_with_the_wrong_checksum_is_not_attached(self):
+        got = self.volume_with(
+            *build.lfn_entries("Someone else.txt", b"SOMEON~1TXT"),
+            build.short_entry(b"MINE    TXT", 0x20, 0, 0))
+        self.assertEqual(got["MINE.TXT"]["name"], "MINE.TXT")
+
+    def test_deleted_file_keeps_its_own_deleted_long_name(self):
+        short = bytearray(build.short_entry(b"REPORT~1TXT", 0x20, 0, 0))
+        short[0] = 0xE5
+        got = self.volume_with(
+            *build.lfn_entries("Quarterly report.txt", b"REPORT~1TXT",
+                               deleted=True),
+            bytes(short))
+        self.assertEqual(got["_EPORT~1.TXT"]["name"], "Quarterly report.txt")
+
+
 if __name__ == "__main__":
     unittest.main()

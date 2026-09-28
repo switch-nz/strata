@@ -232,6 +232,7 @@
   "server.report.unknown_route": "Unknown route.",
   "server.report_write.could_write": "Could not write: %s",
   "server.search.enter_least_one_term": "Enter at least one term.",
+  "server.search.no_encoding": "Tick at least one encoding to search in.",
   "server.search_files.filesystem_image_search_use": "No filesystem on this image to search. Use “Raw media” to search the bytes directly.",
   "server.search_files.supported_filesystem_partition": "No supported filesystem in that partition.",
   "server.search_save.saved_search_needs_name": "A saved search needs a name.",

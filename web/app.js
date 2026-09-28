@@ -5008,11 +5008,23 @@ async function runProfile() {
   }
 }
 
+function coverageLabel(p) {
+  if (!p || p.coverage == null) return '';
+  const pct = p.coverage >= 1 ? null
+    : p.coverage < 0.01 ? (100 * p.coverage).toPrecision(2) + '%'
+    : (100 * p.coverage).toFixed(1) + '%';
+  const short = pct === null ? txt('ui.core.read_all')
+    : txt('ui.core.read_part', { pct });
+  return `<span class="core-coverage" title="${esc(p.note || '')}">${
+    esc(short)}</span>`;
+}
+
 function renderLegend() {
   const seen = new Set((S.profile?.buckets || []).map(b => b[0]));
   $('#core-legend').innerHTML = [...seen].sort().map(c =>
     `<span title="${CLASS_LABELS[c]}"><i style="background:var(${
-      CLASS_COLOURS[c]})"></i>${CLASS_LABELS[c]}</span>`).join('');
+      CLASS_COLOURS[c]})"></i>${CLASS_LABELS[c]}</span>`).join('')
+    + coverageLabel(S.profile);
 }
 
 async function runVerify() {
@@ -5457,7 +5469,12 @@ async function doFind() {
     box.innerHTML = `<p class="empty">${txt('help.matches_windows_stores_most_text_utf_16le')}</p>`;
     return;
   }
-  box.innerHTML = r.hits.map((h, i) => {
+  const limit = r.truncated
+    ? `<p class="empty">${esc(txt('ui.find.hit_limit', {
+        n: r.hits.length.toLocaleString(),
+        offset: '0x' + fmt.hex(r.complete_to, 8) }))}</p>`
+    : '';
+  box.innerHTML = limit + r.hits.map((h, i) => {
     const pre = esc(h.context.slice(0, h.match_at));
     const mid = esc(h.context.slice(h.match_at, h.match_at + h.length));
     const post = esc(h.context.slice(h.match_at + h.length));
@@ -5765,11 +5782,27 @@ async function hashScope(part, scope, entry, label) {
   }
 }
 
+function hashFailures(r) {
+  const failed = r.failures || [];
+  if (!r.failed) return '';
+  return `<div class="results-head">${esc(txt('ui.hash.failed', {
+      n: r.failed.toLocaleString() }))}</div>` +
+    failed.map(f => `
+      <div class="result hash-failed">
+        <div class="top"><span class="kind">not hashed</span>
+          <span class="off">${fmt.bytes(f.size)}</span></div>
+        <div class="name">${esc(f.name || '')}</div>
+        <div class="path">${esc(f.path || '')}</div>
+        <div class="sub">${esc(f.error || '')}</div>
+      </div>`).join('');
+}
+
 function renderHashes(r, part) {
   const box = $('#hash-results');
   const rows = r.rows || [];
   if (!rows.length) {
-    box.innerHTML = `<p class="empty">${txt('ui.nothing_hashed')}</p>`;
+    box.innerHTML = hashFailures(r)
+      || `<p class="empty">${txt('ui.nothing_hashed')}</p>`;
     tabCount('hash', 0);
     return;
   }
@@ -5779,10 +5812,11 @@ function renderHashes(r, part) {
     mc.known_bad ? txt('ui.known_bad_known_bad', { known_bad: mc.known_bad }) : null,
     mc.known_good ? txt('ui.known_good_known_good', { known_good: mc.known_good }) : null,
     mc.notable ? `${mc.notable} notable` : null,
+    r.failed ? txt('ui.hash.failed_short', { n: r.failed.toLocaleString() }) : null,
     r.truncated ? txt('ui.list_truncated') : null,
   ].filter(Boolean).join(' · ');
 
-  box.innerHTML = `<div class="results-head">${summary}</div>` +
+  box.innerHTML = hashFailures(r) + `<div class="results-head">${summary}</div>` +
     rows.map((h, i) => `
       <div class="result ${h.match_kind ? 'match-' + h.match_kind : ''}" data-i="${i}">
         <div class="top">
@@ -8793,7 +8827,8 @@ async function peekCase(path) {
     <div class="notice ${r.audit_integrity?.intact ? '' : 'bad'}">
       ${r.audit_integrity?.intact
         ? 'Audit chain intact.'
-        : `Audit chain broken at entry ${r.audit_integrity?.broken_at}.`}
+        : `Audit chain broken at entry ${r.audit_integrity?.broken_at}.${
+            r.audit_integrity?.detail ? ' ' + esc(r.audit_integrity.detail) : ''}`}
     </div>`;
 }
 
@@ -9910,8 +9945,9 @@ $('#btn-audit').addEventListener('click', async () => {
   const r = await api.get('audit');
   $('#audit-state').innerHTML = r.integrity.intact
     ? txt('messages.hash_chain_intact_across_all_entries')
-    : `<strong style="color:var(--alarm)">${txt('ui.chain_broken_entry_broken', { broken_at: r.integrity.broken_at })}</strong> The log has been altered since it
-        was written.`;
+    : `<strong style="color:var(--alarm)">${txt('ui.chain_broken_entry_broken', { broken_at: r.integrity.broken_at })}</strong> ${
+        r.integrity.detail ? esc(r.integrity.detail)
+          : 'The log has been altered since it was written.'}`;
   $('#audit-body').innerHTML = r.entries.map(e => `
     <div class="entry">
       <span class="when">${e.at}</span>

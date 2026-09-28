@@ -137,6 +137,17 @@ class Exfat(unittest.TestCase):
 
     # A NoFatChain directory's FAT entries are zero, so its clusters come
     # from the stream extension in its parent, not from the FAT.
+    def test_bytes_past_valid_data_length_read_as_zeros(self):
+        e = dict(self.root["Contiguous.dat"], valid_size=1000)
+        full = build.exfat_contiguous_content()
+        want = full[:1000] + bytes(3000 - 1000)
+        self.assertEqual(self.fs.read_file(e), want)
+        self.assertEqual(self.fs.read_range(e, 990, 20), want[990:1010])
+        self.assertEqual(self.fs.read_range(e, 2000, 10), bytes(10))
+        self.assertIn("read as zeros", self.fs.stat(e)["note"])
+        # Fully valid, the file reads as it always did.
+        self.assertEqual(self.fs.read_file(self.root["Contiguous.dat"]), full)
+
     def test_contiguous_subdirectory_second_cluster_listed(self):
         sub = self.root["Subdir"]
         inner = by_name(self.fs.listdir(sub["start_cluster"], "/Subdir"))

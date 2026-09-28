@@ -22,13 +22,13 @@ for T in $TARGETS; do
     OUT="../engine/native/$T"
     mkdir -p "$OUT"
     SRC="target/$T/release"
-    # cdylib extension per OS family
+    # cdylib file name per OS family: Cargo gives Windows DLLs no lib prefix
     case "$T" in
-        *windows*) EXT=dll; NAME=strata_native.dll ;;
-        *darwin*)  EXT=dylib; NAME=libstrata_native.dylib ;;
-        *)         EXT=so; NAME=libstrata_native.so ;;
+        *windows*) NAME=strata_native.dll ;;
+        *darwin*)  NAME=libstrata_native.dylib ;;
+        *)         NAME=libstrata_native.so ;;
     esac
-    cp "$SRC/libstrata_native.$EXT" "$OUT/$NAME"
+    cp "$SRC/$NAME" "$OUT/$NAME"
     ls -l "$OUT/$NAME"
 done
 echo "done"

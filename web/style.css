@@ -1001,6 +1001,8 @@ em.kind.notable    { color: var(--amber); }
 
 .result.match-known_bad { border-left: 2px solid var(--alarm); }
 .result.match-known_bad .kind { color: var(--alarm); }
+.result.hash-failed { border-left: 2px solid var(--amber); }
+.result.hash-failed .kind { color: var(--amber-text); }
 .result.match-known_good { opacity: .55; }
 .result.match-known_good .kind { color: var(--good); }
 .result.match-notable { border-left: 2px solid var(--amber); }
@@ -1093,6 +1095,7 @@ em.kind.notable    { color: var(--amber); }
   color: var(--dimmer);
 }
 .core-legend i { display: block; height: 3px; border-radius: 1px; }
+.core-legend .core-coverage { margin-top: 2px; color: var(--dim); cursor: help; }
 
 .tray { position: relative; flex: 0 0 auto; }
 .tray-toggle {

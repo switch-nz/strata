@@ -2,8 +2,9 @@
 
 Strata is pure Python by contract, but AES-XTS sector decrypts and Argon2
 unlocks dominate encrypted-volume work.  This module loads a small Rust
-``cdylib`` (source in ``native/``, prebuilt binaries vendored under
-``engine/native/<target-triple>/``) and re-exports the exact operations the
+``cdylib`` (source in ``native/``; ``native/build.sh`` or ``build.ps1``
+places the built library in ``engine/native/<target-triple>/``, which is not
+checked in) and re-exports the exact operations the
 pure-Python modules implement, so ``engine.crypto.aes`` and
 ``engine.crypto.argon2`` can swap implementations behind their existing
 signatures.
@@ -88,9 +89,8 @@ def _candidate_paths():
         return
     base = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "native", dirname)
-    # The vendored binary lives in engine/native/<triple>/ next to this
-    # module (engine/native.py -> engine/native/<triple>/...); a build run
-    # from the repo root may also have left it in <repo>/native/target.
+    # The build scripts copy the library to engine/native/<triple>/ next to
+    # this module; that is the only place looked.
     yield os.path.join(base, name)
 
 

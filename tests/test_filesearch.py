@@ -72,5 +72,33 @@ class WalkStream(unittest.TestCase):
         self.assertEqual(len(seen), 2)
 
 
+
+class ContentFs(FakeFs):
+    def __init__(self, files):
+        super().__init__({0: [
+            {"name": n, "path": "/" + n, "is_dir": False, "size": len(d),
+             "mft": 10 + i} for i, (n, d) in enumerate(files.items())]})
+        self.files = files
+
+    def read_file(self, entry, max_bytes=None):
+        return self.files[entry["name"]][:max_bytes]
+
+
+class RegexContent(unittest.TestCase):
+
+    def test_regex_finds_utf16le_content(self):
+        fs = ContentFs({"notes.bin": b"\x07" + "key=ABC123".encode(
+            "utf-16-le")})
+        got = filesearch.search(fs, [r"key=\w+"], root_node=0, mode="content",
+                                regex=True)
+        self.assertEqual([(h["file_offset"], h["encoding"])
+                          for h in got["hits"]], [(1, "utf-16le")])
+
+    def test_regex_ascii_only_when_asked(self):
+        fs = ContentFs({"a.bin": b"key=1 " + "key=2".encode("utf-16-le")})
+        got = filesearch.search(fs, [r"key=\d"], root_node=0, mode="content",
+                                regex=True, encodings=("ascii",))
+        self.assertEqual([h["encoding"] for h in got["hits"]], ["ascii"])
+
 if __name__ == "__main__":
     unittest.main()
