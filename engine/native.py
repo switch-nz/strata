@@ -34,7 +34,7 @@ import platform
 import struct
 
 __all__ = ["available", "NativeError", "argon2_derive", "aes_xts_decrypt",
-           "aes_cbc_decrypt", "marvin32"]
+           "aes_cbc_decrypt", "marvin32", "fuzzy_hash"]
 
 _LIBRARY_NAME = {
     "Linux": "libstrata_native.so",
@@ -154,6 +154,15 @@ def _bind(lib):
         ctypes.POINTER(u64),       # out (one 64-bit word)
     ]
     lib.strata_marvin32.restype = i32
+
+    lib.strata_fuzzy_hash.argtypes = [
+        ctypes.c_char_p,           # data
+        usize,                     # data_len
+        ctypes.c_char_p,           # out buffer
+        usize,                     # out buffer capacity
+        ctypes.POINTER(usize),     # out: bytes written
+    ]
+    lib.strata_fuzzy_hash.restype = i32
     return lib
 
 
@@ -238,6 +247,21 @@ def marvin32(data, seed):
     if rc != _OK:
         raise NativeError(_code_name(rc))
     return out.value
+
+
+def fuzzy_hash(data):
+    """The ssdeep-compatible fuzzy hash via the sidecar; raises NativeError.
+    Returns the "blocksize:sig1:sig2" string, same as
+    engine.fuzzyhash._hash_bytes_py."""
+    lib = _require()
+    cap = 256                     # generous: the format tops out near 110
+    out = ctypes.create_string_buffer(cap)
+    out_len = ctypes.c_size_t(0)
+    rc = lib.strata_fuzzy_hash(data, len(data), out, cap,
+                               ctypes.byref(out_len))
+    if rc != _OK:
+        raise NativeError(_code_name(rc))
+    return out.raw[:out_len.value].decode("ascii")
 
 
 def aes_cbc_decrypt(key, iv, data):

@@ -1,6 +1,6 @@
 //! Native crypto sidecar for Strata.
 //!
-//! Exposes four operations plus a self-test over a C ABI consumed by
+//! Exposes six operations plus a self-test over a C ABI consumed by
 //! `engine/native.py` (ctypes).  Error codes are a mirror of the table in
 //! that file — change them together.
 //!
@@ -357,6 +357,174 @@ pub extern "C" fn strata_marvin32(
     STRATA_OK
 }
 
+/// Context-triggered piecewise hashing (the ssdeep-compatible fuzzy hash),
+/// mirroring `engine/fuzzyhash.py` control-flow for control-flow -- that
+/// module is the correctness reference (it is itself checked against a
+/// third-party pure-Python ssdeep implementation, ppdeep, in
+/// tests/test_fuzzyhash.py) and the fallback when this sidecar is
+/// unavailable. It runs over every byte of every file in a bulk hashing
+/// job, which is what made a native port worth doing.
+const FUZZY_F_TABLE: [u8; 64] = [
+    0x00, 0x13, 0x26, 0x39, 0x0c, 0x1f, 0x32, 0x05, 0x18, 0x2b, 0x3e, 0x11,
+    0x24, 0x37, 0x0a, 0x1d, 0x30, 0x03, 0x16, 0x29, 0x3c, 0x0f, 0x22, 0x35,
+    0x08, 0x1b, 0x2e, 0x01, 0x14, 0x27, 0x3a, 0x0d, 0x20, 0x33, 0x06, 0x19,
+    0x2c, 0x3f, 0x12, 0x25, 0x38, 0x0b, 0x1e, 0x31, 0x04, 0x17, 0x2a, 0x3d,
+    0x10, 0x23, 0x36, 0x09, 0x1c, 0x2f, 0x02, 0x15, 0x28, 0x3b, 0x0e, 0x21,
+    0x34, 0x07, 0x1a, 0x2d,
+];
+const FUZZY_B64: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const FUZZY_MIN_BLOCK_SIZE: u64 = 3;
+const FUZZY_SPAMSUM_LENGTH: usize = 64;
+const FUZZY_ROLL_WINDOW: usize = 7;
+const FUZZY_HASH_INIT: u8 = 0x27;
+
+/// Mirrors `_RollingHash` -- a 7-byte rolling checksum used only to pick
+/// trigger points. `h1`/`h2` are Python's unbounded ints (they stay tiny,
+/// bounded by 7 byte values, so i64 never risks overflow); `h3` is masked
+/// to 32 bits every step in Python, which a plain `u32` shift already does.
+struct FuzzyRoll {
+    window: [i64; FUZZY_ROLL_WINDOW],
+    h1: i64,
+    h2: i64,
+    h3: u32,
+    pos: u64,
+}
+
+impl FuzzyRoll {
+    fn new() -> Self {
+        FuzzyRoll { window: [0; FUZZY_ROLL_WINDOW], h1: 0, h2: 0, h3: 0, pos: 0 }
+    }
+
+    fn update(&mut self, b: u8) -> u32 {
+        let bv = b as i64;
+        let slot = (self.pos % FUZZY_ROLL_WINDOW as u64) as usize;
+        self.h2 = self.h2 - self.h1 + (FUZZY_ROLL_WINDOW as i64) * bv;
+        self.h1 = self.h1 + bv - self.window[slot];
+        self.window[slot] = bv;
+        self.pos += 1;
+        self.h3 = (self.h3 << 5) ^ (bv as u32);
+        // (h1 + h2 + h3) & 0xFFFFFFFF, matching Python's mask on a value
+        // that can be transiently negative before masking.
+        let combined = self.h1.wrapping_add(self.h2).wrapping_add(self.h3 as i64);
+        (combined as u64 & 0xFFFF_FFFF) as u32
+    }
+}
+
+fn fuzzy_block_hash_next(h: u8, b: u8) -> u8 {
+    FUZZY_F_TABLE[h as usize] ^ (b & 0x3F)
+}
+
+fn fuzzy_initial_block_size(length: usize) -> u64 {
+    let mut bs = FUZZY_MIN_BLOCK_SIZE;
+    while bs * (FUZZY_SPAMSUM_LENGTH as u64) < (length as u64) {
+        bs *= 2;
+    }
+    bs
+}
+
+/// Mirrors `_piecewise_pass` exactly. `last1`/`last2` are Python's ""
+/// (`None` here) versus a real trailing character (`Some(b64 index)`).
+fn fuzzy_piecewise_pass(
+    data: &[u8],
+    block_size: u64,
+) -> (Vec<u8>, Vec<u8>, Option<u8>, Option<u8>) {
+    let mut roll = FuzzyRoll::new();
+    let mut h1 = FUZZY_HASH_INIT;
+    let mut h2 = FUZZY_HASH_INIT;
+    let mut sig1 = Vec::<u8>::new();
+    let mut sig2 = Vec::<u8>::new();
+    let mut last1: Option<u8> = None;
+    let mut last2: Option<u8> = None;
+    let mut rh: u32 = 0;
+    for &b in data {
+        h1 = fuzzy_block_hash_next(h1, b);
+        h2 = fuzzy_block_hash_next(h2, b);
+        rh = roll.update(b);
+        if (rh as u64) % block_size == block_size - 1 {
+            last1 = Some(h1);
+            if sig1.len() < FUZZY_SPAMSUM_LENGTH - 1 {
+                sig1.push(h1);
+                h1 = FUZZY_HASH_INIT;
+                last1 = None;
+            }
+            if (rh as u64) % (block_size * 2) == block_size * 2 - 1 {
+                last2 = Some(h2);
+                if sig2.len() < FUZZY_SPAMSUM_LENGTH / 2 - 1 {
+                    sig2.push(h2);
+                    h2 = FUZZY_HASH_INIT;
+                    last2 = None;
+                }
+            }
+        }
+    }
+    let tail1 = if rh != 0 { Some(h1) } else { last1 };
+    let tail2 = if rh != 0 { Some(h2) } else { last2 };
+    (sig1, sig2, tail1, tail2)
+}
+
+/// Mirrors `hash_bytes`: retries with a halved block size, rescanning from
+/// the start, until the first signature is long enough or the block size
+/// bottoms out. Returns the "blocksize:sig1:sig2" string.
+fn fuzzy_hash(data: &[u8]) -> String {
+    let mut block_size = fuzzy_initial_block_size(data.len());
+    loop {
+        let (sig1, sig2, tail1, tail2) = fuzzy_piecewise_pass(data, block_size);
+        if block_size > FUZZY_MIN_BLOCK_SIZE && sig1.len() < FUZZY_SPAMSUM_LENGTH / 2 {
+            block_size /= 2;
+            continue;
+        }
+        let mut out = block_size.to_string();
+        out.push(':');
+        for i in sig1 {
+            out.push(FUZZY_B64[i as usize] as char);
+        }
+        if let Some(i) = tail1 {
+            out.push(FUZZY_B64[i as usize] as char);
+        }
+        out.push(':');
+        for i in sig2 {
+            out.push(FUZZY_B64[i as usize] as char);
+        }
+        if let Some(i) = tail2 {
+            out.push(FUZZY_B64[i as usize] as char);
+        }
+        return out;
+    }
+}
+
+/// The fuzzy hash of `data` (`data_len` bytes, may be empty) as an ASCII
+/// "blocksize:sig1:sig2" string, written into `out` (`out_cap` bytes,
+/// never more than ~110 in practice); `out_len` gets the string's length.
+/// `STRATA_ERR_PARAMS` if `out_cap` is too small.
+#[no_mangle]
+pub extern "C" fn strata_fuzzy_hash(
+    data: *const u8,
+    data_len: usize,
+    out: *mut u8,
+    out_cap: usize,
+    out_len: *mut usize,
+) -> i32 {
+    if out.is_null() || out_len.is_null() || (data.is_null() && data_len > 0) {
+        return STRATA_ERR_PARAMS;
+    }
+    let slice: &[u8] = if data_len > 0 {
+        unsafe { std::slice::from_raw_parts(data, data_len) }
+    } else {
+        &[]
+    };
+    let result = fuzzy_hash(slice);
+    let bytes = result.as_bytes();
+    if bytes.len() > out_cap {
+        return STRATA_ERR_PARAMS;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, bytes.len());
+        *out_len = bytes.len();
+    }
+    STRATA_OK
+}
+
 /// Load-time self-test: known-answer vectors, not consistency checks.
 ///
 /// Each primitive is checked against a published answer, so a build that
@@ -373,6 +541,9 @@ pub extern "C" fn strata_marvin32(
 /// * Marvin32 -- one of the .NET runtime's own Marvin test vectors (seed
 ///   0x004FB61A001BDBCC), the same one `tests/test_registry.py` checks the
 ///   pure-Python implementation against.
+/// * Fuzzy hash -- one ppdeep-verified vector, the same one
+///   `tests/test_fuzzyhash.py` checks the pure-Python implementation
+///   against.
 ///
 /// Broader agreement with the pure-Python implementation (key sizes, sector
 /// sizes, ciphertext stealing being refused) is checked by
@@ -482,6 +653,23 @@ pub extern "C" fn strata_selftest() -> i32 {
         MARVIN_SEED, &mut marvin_out,
     ) != STRATA_OK
         || marvin_out != 0xE118_47E4_F067_8C41
+    {
+        return STRATA_ERR_SELFTEST;
+    }
+
+    // Fuzzy hash of b"hello world", checked against a third-party
+    // pure-Python ssdeep implementation (ppdeep) in tests/test_fuzzyhash.py
+    // -- the same vector engine.fuzzyhash's own pure implementation is
+    // checked against.
+    let fuzzy_input = b"hello world";
+    let want_fuzzy = b"3:iKFSMPn:rJPn";
+    let mut fuzzy_out = [0u8; 32];
+    let mut fuzzy_len: usize = 0;
+    if strata_fuzzy_hash(
+        fuzzy_input.as_ptr(), fuzzy_input.len(),
+        fuzzy_out.as_mut_ptr(), fuzzy_out.len(), &mut fuzzy_len,
+    ) != STRATA_OK
+        || &fuzzy_out[..fuzzy_len] != want_fuzzy
     {
         return STRATA_ERR_SELFTEST;
     }

@@ -54,6 +54,14 @@ records, not how the code changed.
   native sidecar from 0.5.1 now covers this too — measured over 500x faster
   on synthetic data, with byte-identical results. No native module: no
   change in behaviour, just the same pure-Python speed as before.
+- **Bulk hashing (verify acquisition hashes, or hashing a folder or a whole
+  volume) is much faster when the optional native module is installed.** The
+  fuzzy hash computed alongside MD5/SHA-1/SHA-256 for every file is a
+  per-byte pass that dominated the time on anything but small files — a
+  single 20 MB file could take over ten seconds. The native sidecar now
+  covers it too, measured over 50x faster end to end on synthetic data, with
+  byte-identical results. No native module: no change in behaviour, just
+  the same pure-Python speed as before.
 
 ### Fixed
 

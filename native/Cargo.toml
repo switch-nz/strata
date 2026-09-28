@@ -3,7 +3,7 @@ name = "strata-native-crypto"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Native sidecar for Strata: AES-XTS/CBC decrypt, Argon2 and Marvin32"
+description = "Native sidecar for Strata: AES-XTS/CBC decrypt, Argon2, Marvin32 and fuzzy hashing"
 
 [lib]
 name = "strata_native"
