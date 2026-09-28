@@ -13,6 +13,18 @@ records, not how the code changed.
 
 ### Fixed
 
+- **Entries removed from the end of the audit log went unnoticed.** Deleting
+  the newest entries, or all of them, still verified as intact. The case now
+  records its last entry alongside the log, and each new entry chains from
+  that record, so entries cut from the end are reported as a break (with
+  what is missing) even after more entries have been written. Cases from
+  earlier versions start recording from their next entry.
+- **Two Strata instances on one case folder could break the audit chain.**
+  Both could chain a new entry from the same previous one, which then
+  verified as tampered although nothing had been altered. Writing an entry
+  now takes the case database's write lock first, so entries from any number
+  of instances form one chain.
+
 - **The core sample judged each band of the strip on its first 4 KB.** On
   a large disk each band covers hundreds of megabytes, so a band that began
   with zeros and held encrypted data further in was drawn as zeroed. Anything

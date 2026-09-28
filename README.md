@@ -150,7 +150,10 @@ separate from the tool's suggestions, and never promotes one to the other.
 - Extraction of files and folders with per-item hashes and a manifest; an
   extracted file can be added back as its own exhibit
 - Self-contained HTML report
-- Append-only, hash-chained audit log that reports where it was altered
+- Append-only, hash-chained audit log that reports where it was altered,
+  including entries cut from the end. The chain is not keyed: it shows
+  tampering by anyone who does not also recompute every later hash, but
+  cannot rule that out
 
 ## Not implemented
 

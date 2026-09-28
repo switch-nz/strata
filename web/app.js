@@ -8827,7 +8827,8 @@ async function peekCase(path) {
     <div class="notice ${r.audit_integrity?.intact ? '' : 'bad'}">
       ${r.audit_integrity?.intact
         ? 'Audit chain intact.'
-        : `Audit chain broken at entry ${r.audit_integrity?.broken_at}.`}
+        : `Audit chain broken at entry ${r.audit_integrity?.broken_at}.${
+            r.audit_integrity?.detail ? ' ' + esc(r.audit_integrity.detail) : ''}`}
     </div>`;
 }
 
@@ -9944,8 +9945,9 @@ $('#btn-audit').addEventListener('click', async () => {
   const r = await api.get('audit');
   $('#audit-state').innerHTML = r.integrity.intact
     ? txt('messages.hash_chain_intact_across_all_entries')
-    : `<strong style="color:var(--alarm)">${txt('ui.chain_broken_entry_broken', { broken_at: r.integrity.broken_at })}</strong> The log has been altered since it
-        was written.`;
+    : `<strong style="color:var(--alarm)">${txt('ui.chain_broken_entry_broken', { broken_at: r.integrity.broken_at })}</strong> ${
+        r.integrity.detail ? esc(r.integrity.detail)
+          : 'The log has been altered since it was written.'}`;
   $('#audit-body').innerHTML = r.entries.map(e => `
     <div class="entry">
       <span class="when">${e.at}</span>

@@ -1034,21 +1034,44 @@ class Case:
         return {"path": row["path"], "label": row["label"],
                 "removed": holdings}
 
+    # The chain's last entry, "<seq>:<hash>", kept in meta and written in
+    # the same transaction as the entry. Each new entry chains from it, not
+    # from whatever row happens to be last, so entries cut from the end of
+    # the log still show as a break once more are written after them.
+    AUDIT_HEAD = "audit_head"
+
     def log(self, action, detail=None):
         with _case_lock(self.path):
-            row = self.db.execute("SELECT hash FROM audit ORDER BY seq DESC "
-                                  "LIMIT 1").fetchone()
-            prev = row["hash"] if row else ""
-            at = utcnow()
-            payload = json.dumps(detail or {}, sort_keys=True, default=str)
-            h = hashlib.sha256(
-                ("%s|%s|%s|%s|%s" % (prev, at, self.examiner, action, payload))
-                .encode("utf-8")).hexdigest()
-            self.db.execute(
-                "INSERT INTO audit (at, examiner, action, detail, prev_hash, "
-                "hash) VALUES (?,?,?,?,?,?)",
-                (at, self.examiner, action, payload, prev, h))
-            self.db.commit()
+            # The in-process lock does not reach another Strata on the same
+            # case folder; SQLite's write lock does. Taking it before reading
+            # the head means two processes cannot both chain from one entry.
+            if self.db.in_transaction:
+                self.db.commit()
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                head = self.get(self.AUDIT_HEAD)
+                if head:
+                    prev = head.partition(":")[2]
+                else:
+                    row = self.db.execute("SELECT hash FROM audit ORDER BY "
+                                          "seq DESC LIMIT 1").fetchone()
+                    prev = row["hash"] if row else ""
+                at = utcnow()
+                payload = json.dumps(detail or {}, sort_keys=True, default=str)
+                h = hashlib.sha256(
+                    ("%s|%s|%s|%s|%s" % (prev, at, self.examiner, action,
+                                         payload)).encode("utf-8")).hexdigest()
+                cur = self.db.execute(
+                    "INSERT INTO audit (at, examiner, action, detail, "
+                    "prev_hash, hash) VALUES (?,?,?,?,?,?)",
+                    (at, self.examiner, action, payload, prev, h))
+                self.db.execute("INSERT OR REPLACE INTO meta VALUES (?,?)",
+                                (self.AUDIT_HEAD,
+                                 "%d:%s" % (cur.lastrowid, h)))
+                self.db.commit()
+            except BaseException:
+                self.db.rollback()
+                raise
             return h
 
     def audit(self, limit=500):
@@ -1056,7 +1079,13 @@ class Case:
             "SELECT * FROM audit ORDER BY seq DESC LIMIT ?", (limit,))]
 
     def verify_audit(self):
+        """Whether every entry hashes to what it records and chains from the
+        one before, and the log still ends at the entry the case last wrote.
+        The chain is not keyed: it shows alteration, deletion and truncation
+        by anyone who does not also recompute every later hash and the
+        recorded head; it cannot rule that out."""
         prev = ""
+        last = None
         for r in self.db.execute("SELECT * FROM audit ORDER BY seq"):
             h = hashlib.sha256(
                 ("%s|%s|%s|%s|%s" % (prev, r["at"], r["examiner"], r["action"],
@@ -1064,6 +1093,28 @@ class Case:
             if h != r["hash"] or r["prev_hash"] != prev:
                 return {"intact": False, "broken_at": r["seq"]}
             prev = r["hash"]
+            last = r["seq"]
+        head = self.get(self.AUDIT_HEAD)
+        if head:
+            seq, _, want = head.partition(":")
+            try:
+                seq = int(seq)
+            except ValueError:
+                seq = None
+            if seq is None or last is None or last < seq or \
+                    (last == seq and want != prev):
+                return {"intact": False,
+                        "broken_at": (last or 0) + 1,
+                        "detail": ("The log ends at entry %s, but the last "
+                                   "entry the case recorded writing is %s: "
+                                   "entries have been removed from the end."
+                                   % (last if last is not None else "none",
+                                      seq))}
+            if last > seq:
+                return {"intact": False, "broken_at": seq + 1,
+                        "detail": ("Entries after %d were not written by "
+                                   "Strata: the case records %d as its last."
+                                   % (seq, seq))}
         return {"intact": True, "broken_at": None}
 
     @_writes
