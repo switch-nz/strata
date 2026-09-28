@@ -335,7 +335,7 @@ def index_layout(conn, schema="main"):
 
 ARTEFACT_VERSION = {
     "browser": 5, "recyclebin": 1, "lnk": 2, "appcompat": 1, "prefetch": 1,
-    "shellbags": 1, "mail": 1, "leveldb": 1, "vss": 1, "usn": 1,
+    "shellbags": 1, "mail": 2, "leveldb": 1, "vss": 1, "usn": 1,
     "carve": 1, "timeline": 1, "evtx": 1, "wallets": 1,
 }
 
