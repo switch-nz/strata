@@ -586,6 +586,18 @@ select:focus, input:focus, textarea:focus { border-color: var(--dim); }
 }
 .result .flag.warn { color: var(--amber); border-color: var(--amber-dim); }
 
+.result.note { cursor: default; }
+.result.note.is-withdrawn { opacity: 0.6; }
+.result.note .note-body { white-space: pre-wrap; overflow-wrap: anywhere;
+                          margin: 4px 0; color: var(--text); }
+.result.note .meta { color: var(--dim); font-size: 11px; }
+.result.note textarea { width: 100%; margin: 4px 0; }
+.result.note .note-actions { display: flex; gap: 6px; margin-top: 4px; }
+.note-history summary { color: var(--dim); font-size: 11px; cursor: pointer; }
+.note-history .note-version { border-left: 1px solid var(--line);
+                              padding-left: 8px; margin: 4px 0; }
+.note-history .note-version .note-body { color: var(--dim); }
+
 .mail-detail { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
               cursor: default; }
 .mail-detail .empty { padding: 4px 0; }

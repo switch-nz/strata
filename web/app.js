@@ -45,6 +45,7 @@ const S = {
   structToken: null,
   fileHits: [],
   tags: [],
+  notes: [],
   tagCounts: {},
   suggestedTags: [],
   savedSearches: [],
@@ -3372,6 +3373,7 @@ function switchTo(state, { keepTree = false } = {}) {
   }
   previewNone(txt('messages.select_partition_file'));
   loadMarks();
+  loadNotes();
   refreshIndexState();
   loadTimezone(false);
   const now = (state.evidence || [])
@@ -7166,7 +7168,7 @@ function tabCount(view, n) {
   const tab = $(`.tab[data-view="${view}"]`);
   const base = { carve: 'Carved', find: 'Search', marks: 'Marks',
                  time: 'Timeline', tags: 'Tagged', hash: 'Hashes',
-                 triage: 'Triage', attack: 'ATT&CK', diff: 'Diff' }[view];
+                 triage: 'Triage', attack: 'ATT&CK', diff: 'Diff', notes: 'Notes' }[view];
   if (!base) return;
   tab.innerHTML = n == null ? base : `${base} <span class="count">${n}</span>`;
 }
@@ -8187,6 +8189,120 @@ async function loadMarks() {
   hex.draw();
 }
 
+// Case notes: each version names who wrote it. An edit is a new version and
+// a withdrawal is a flag; nothing is changed in place, so the record keeps
+// what was said, by whom, and when.
+const noteTime = t => (t ? t.replace('T', ' ').replace('Z', ' UTC') : '—');
+
+async function loadNotes() {
+  const box = $('#note-results');
+  if (!S.casePath) {
+    S.notes = [];
+    if (box) box.innerHTML = `<p class="empty">${txt('ui.notes.no_case')}</p>`;
+    tabCount('notes', null);
+    return;
+  }
+  const r = await api.get('notes', {
+    retracted: $('#note-show-retracted')?.checked ? 1 : undefined,
+  }).catch(() => null);
+  S.notes = (r && r.notes) || [];
+  renderNotes();
+}
+
+function renderNotes() {
+  const box = $('#note-results');
+  if (!box) return;
+  const live = S.notes.filter(n => !n.retracted_at);
+  tabCount('notes', live.length || null);
+  if (!S.notes.length) {
+    box.innerHTML = `<p class="empty">${txt('ui.notes.none')}</p>`;
+    return;
+  }
+  box.innerHTML = S.notes.map((n, i) => {
+    const hist = n.history || [];
+    const edited = n.examiner !== n.author || hist.length
+      ? `<div class="meta">${esc(txt('ui.notes.edited_by',
+          { who: n.examiner || '—', when: noteTime(n.at) }))}</div>` : '';
+    const gone = n.retracted_at
+      ? `<div class="meta">${esc(txt('ui.notes.withdrawn_by',
+          { who: n.retracted_by || '—', when: noteTime(n.retracted_at) }))}</div>`
+      : '';
+    const older = hist.length ? `<details class="note-history"><summary>${
+        esc(txt('ui.notes.history', { count: hist.length }))}</summary>${
+        hist.map(h => `<div class="note-version"><div class="meta">${
+          esc(h.examiner || '—')} · ${esc(noteTime(h.at))}</div>
+          <div class="note-body">${escText(h.body)}</div></div>`).join('')}
+      </details>` : '';
+    const actions = n.retracted_at ? '' : `<div class="note-actions">
+        <button class="ghost" data-note-edit="${i}">${txt('ui.notes.edit')}</button>
+        <button class="ghost" data-note-withdraw="${i}">${txt('ui.notes.withdraw')}</button>
+      </div>`;
+    return `<div class="result note${n.retracted_at ? ' is-withdrawn' : ''}"
+        data-i="${i}">
+      <div class="top"><span class="kind">${esc(n.author || '—')}</span>
+        <span class="off">${esc(noteTime(n.created_at))}</span></div>
+      <div class="note-body">${escText(n.body)}</div>
+      ${edited}${gone}${older}${actions}
+    </div>`;
+  }).join('');
+  box.querySelectorAll('[data-note-edit]').forEach(b =>
+    b.addEventListener('click', () => editNote(+b.dataset.noteEdit)));
+  box.querySelectorAll('[data-note-withdraw]').forEach(b =>
+    b.addEventListener('click', () => withdrawNote(+b.dataset.noteWithdraw)));
+}
+
+async function noteResult(r) {
+  if (!r || r.error) {
+    toast(r?.error || txt('ui.notes.none'));
+    await loadNotes();
+    return false;
+  }
+  S.notes = r.notes || [];
+  if ($('#note-show-retracted')?.checked) await loadNotes();
+  else renderNotes();
+  return true;
+}
+
+async function addNote() {
+  const el = $('#note-body');
+  const body = (el.value || '').trim();
+  if (!body) return el.focus();
+  if (await noteResult(await api.post('note', { body }))) el.value = '';
+}
+
+function editNote(i) {
+  const n = S.notes[i];
+  const card = $(`#note-results .note[data-i="${i}"]`);
+  if (!n || !card) return;
+  const body = card.querySelector(':scope > .note-body');
+  const actions = card.querySelector('.note-actions');
+  const area = document.createElement('textarea');
+  area.rows = Math.min(12, Math.max(3, n.body.split('\n').length + 1));
+  area.value = n.body;
+  body.replaceWith(area);
+  actions.innerHTML = `<button class="solid" data-save>${txt('ui.notes.save')}</button>
+    <button class="ghost" data-cancel>${txt('ui.notes.cancel')}</button>`;
+  actions.querySelector('[data-cancel]').addEventListener('click', renderNotes);
+  actions.querySelector('[data-save]').addEventListener('click', async () => {
+    const text = area.value.trim();
+    if (!text) return area.focus();
+    await noteResult(await api.post('note/edit', { id: n.id, body: text }));
+  });
+  area.focus();
+}
+
+async function withdrawNote(i) {
+  const n = S.notes[i];
+  if (!n || !window.confirm(txt('ui.notes.confirm_withdraw'))) return;
+  await noteResult(await api.post('note/retract', { id: n.id }));
+}
+
+$('#btn-note-add')?.addEventListener('click', addNote);
+$('#note-body')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) addNote();
+});
+$('#note-show-retracted')?.addEventListener('change', loadNotes);
+
 function markFrame() {
   if (!S.scope.file || !S.scope.entry) return { frame: 'media' };
   const e = S.scope.entry;
@@ -9103,6 +9219,8 @@ function applyNoCase() {
   S.snapLabel = null;
   S.marks = [];
   S.tags = [];
+  S.notes = [];
+  loadNotes();
   $('#evidence-bar').innerHTML = `
     <button class="ghost" id="btn-open">${txt('ui.app.open')}</button>
     <button class="ghost" id="btn-case">${txt('ui.app.case')}</button>`;
@@ -9288,7 +9406,8 @@ let pulseTimer = null;
 let lastPulse = null;
 
 function markPulse(p) {
-  if (p) lastPulse = { bookmarks: p.bookmarks, tags: p.tags, audit: p.audit };
+  if (p) lastPulse = { bookmarks: p.bookmarks, tags: p.tags, notes: p.notes,
+                       audit: p.audit };
 }
 
 async function pulse() {
@@ -9298,17 +9417,21 @@ async function pulse() {
   const changed = !lastPulse
     || p.bookmarks !== lastPulse.bookmarks
     || p.tags !== lastPulse.tags
+    || p.notes !== lastPulse.notes
     || p.audit !== lastPulse.audit;
   if (!changed) return;
 
   const first = lastPulse === null;
   const added = first ? 0
-    : (p.bookmarks - lastPulse.bookmarks) + (p.tags - lastPulse.tags);
+    : (p.bookmarks - lastPulse.bookmarks) + (p.tags - lastPulse.tags)
+      + (p.notes - lastPulse.notes);
+  const notesChanged = !first && p.notes !== lastPulse.notes;
   markPulse(p);
   if (first) return;
 
   await loadTags();
   await loadMarks();
+  if (notesChanged) await loadNotes();
 
   const mine = (examinerName() || '').toLowerCase();
   const who = (p.latest || '').trim();
@@ -10032,6 +10155,7 @@ function setModule(view) {
   if (view === 'cases') renderCases();
   if (view === 'time') loadStoredTimeline();
   if (view === 'diff') renderDiffPanel();
+  if (view === 'notes') loadNotes();
   hex.resize();
 }
 
@@ -10052,6 +10176,7 @@ $$('.modules .tab').forEach(tab =>
     if (p.split_hex) toggleSplit(true);
     await loadMarks();
     await loadTags();
+    await loadNotes();
     await loadSavedSearches();
     await loadHashSets();
     await refreshIndexState();

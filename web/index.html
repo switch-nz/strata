@@ -44,6 +44,7 @@
   <button class="tab" data-view="hash" role="tab" data-i18n="ui.tags.hashes"></button>
   <button class="tab" data-view="attack" data-no-viewer role="tab" data-i18n="ui.hash.attack"></button>
   <button class="tab" data-view="diff" data-no-viewer role="tab" data-i18n="ui.app.diff"></button>
+  <button class="tab" data-view="notes" data-no-viewer role="tab" data-i18n="ui.app.notes"></button>
 </nav>
 
 <main class="workspace" id="workspace">
@@ -312,6 +313,22 @@
       <div id="attack-tactics" class="art-tree"></div>
       <div class="view-main">
         <div id="attack-results" class="results"></div>
+      </div>
+    </div>
+
+    <div class="view" data-view="notes">
+      <div class="controls">
+        <p class="hint" data-i18n="help.notes.intro"></p>
+        <label class="field"><span data-i18n="ui.notes.new"></span>
+          <textarea id="note-body" rows="4"></textarea></label>
+        <div class="row">
+          <button class="solid" id="btn-note-add" data-i18n="ui.notes.add"></button>
+          <label class="row"><input type="checkbox" id="note-show-retracted">
+            <span data-i18n="ui.notes.show_withdrawn"></span></label>
+        </div>
+      </div>
+      <div class="view-main">
+        <div id="note-results" class="results"></div>
       </div>
     </div>
 

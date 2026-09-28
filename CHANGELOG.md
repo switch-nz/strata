@@ -13,6 +13,14 @@ records, not how the code changed.
 
 ### Added
 
+- **Case notes, attributed to whoever writes them.** A new Notes module
+  keeps notes in the case: each shows who wrote it and when. Editing a note
+  keeps the earlier version, under its own writer's name, and withdrawing a
+  note keeps it on the record marked as withdrawn, so nothing anyone wrote
+  is lost or rewritten. Notes written by another examiner on the same case
+  appear within a few seconds. Adding, editing and withdrawing are recorded
+  in the audit log, and the HTML report has a Case notes section with every
+  version and withdrawal.
 - **Dynamic and differencing VHD disks are read.** Only fixed VHDs opened
   before; dynamic and differencing ones were refused. A dynamic disk is read
   through its block allocation table, with blocks never written reading as

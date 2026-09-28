@@ -192,7 +192,9 @@ Agreeing with another tool is agreement, not verification.
       make this mostly an interface problem.
 - [x] Diff two images, or two snapshots of one volume.
 - [ ] Scripting or plugin API for custom parsers.
-- [ ] Multi-examiner case notes with attribution.
+- [x] Multi-examiner case notes with attribution — each version names its
+      writer and time; edits add a version and withdrawals are flagged, so
+      nothing is changed in place. In the Notes module and the report.
 - [~] Localisation — the interface and engine messages already load from
       `web/strings/`; only English (en-GB) exists.
 
