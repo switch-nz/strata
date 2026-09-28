@@ -81,5 +81,48 @@ class SearchTest(unittest.TestCase):
         self.assertEqual(cov, {"truncated": False, "complete_to": 7})
 
 
+
+class CountingSource(BytesSource):
+    def __init__(self, data):
+        super().__init__(data)
+        self.read = 0
+
+    def read_at(self, off, n):
+        got = super().read_at(off, n)
+        self.read += len(got)
+        return got
+
+
+class CoreSample(unittest.TestCase):
+
+    def test_small_scope_is_read_and_classified_whole(self):
+        # Each bucket starts with zeros and ends with text: a single read at
+        # the start of each bucket would call it all zeroed.
+        data = (b"\x00" * 5000 + b"plain words here. " * 70 + b"\n") * 64
+        src = CountingSource(data)
+        got = profile.profile(src, buckets=64)
+        self.assertEqual(src.read, len(data))
+        self.assertEqual(got["coverage"], 1.0)
+        self.assertIn("Every byte", got["note"])
+        self.assertTrue(all(b[0] != profile.ZERO for b in got["buckets"]))
+
+    def test_large_scope_reads_spread_windows_and_says_how_much(self):
+        old = profile.FULL_READ_MAX
+        profile.FULL_READ_MAX = 1 << 16
+        self.addCleanup(setattr, profile, "FULL_READ_MAX", old)
+        # 16 buckets of 64 KB: zeros, with random bytes in the last quarter.
+        import random
+        rng = random.Random(3)
+        bucket = bytes(48 << 10) + bytes(rng.getrandbits(8)
+                                         for _ in range(16 << 10))
+        data = bucket * 16
+        src = CountingSource(data)
+        got = profile.profile(src, buckets=16, sample=512)
+        self.assertEqual(src.read, 16 * profile.WINDOWS * 512)
+        self.assertLess(got["coverage"], 1.0)
+        self.assertIn("16 evenly spaced reads of 512 bytes", got["note"])
+        # The windows reach the end of each bucket, so none reads as zeroed.
+        self.assertTrue(all(b[0] != profile.ZERO for b in got["buckets"]))
+
 if __name__ == "__main__":
     unittest.main()

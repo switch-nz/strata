@@ -13,6 +13,14 @@ records, not how the code changed.
 
 ### Fixed
 
+- **The core sample judged each band of the strip on its first 4 KB.** On
+  a large disk each band covers hundreds of megabytes, so a band that began
+  with zeros and held encrypted data further in was drawn as zeroed. Anything
+  up to 64 MB is now read and classified in full; above that, each band is
+  classified from sixteen reads spread evenly across it. How much was read
+  is shown beneath the strip ("all read", or a percentage, with the detail on
+  hover), and the README now describes what is actually done.
+
 - **Logical partitions on MBR disks were not listed.** Only the four primary
   entries of an MBR were read, so the volumes in an extended partition (the
   logical drives on many older Windows and Linux disks) never appeared; the

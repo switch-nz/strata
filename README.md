@@ -57,8 +57,11 @@ the session only, and is never written into the case.
 
 ## The core sample
 
-The strip beside the hex view is a map of whatever is currently in scope,
-drawn by classifying every region of it rather than by sampling a few bytes.
+The strip beside the hex view is a map of whatever is currently in scope.
+Anything up to 64 MB is read end to end and every byte of it classified;
+above that, each band of the strip is classified from sixteen reads spread
+evenly across it, so a region is judged on more than its first few bytes.
+How much was read is shown beneath the strip.
 It doubles as the scrollbar: all of what you are looking at is on screen at
 once, and the current position is always in context.
 

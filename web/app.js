@@ -5008,11 +5008,23 @@ async function runProfile() {
   }
 }
 
+function coverageLabel(p) {
+  if (!p || p.coverage == null) return '';
+  const pct = p.coverage >= 1 ? null
+    : p.coverage < 0.01 ? (100 * p.coverage).toPrecision(2) + '%'
+    : (100 * p.coverage).toFixed(1) + '%';
+  const short = pct === null ? txt('ui.core.read_all')
+    : txt('ui.core.read_part', { pct });
+  return `<span class="core-coverage" title="${esc(p.note || '')}">${
+    esc(short)}</span>`;
+}
+
 function renderLegend() {
   const seen = new Set((S.profile?.buckets || []).map(b => b[0]));
   $('#core-legend').innerHTML = [...seen].sort().map(c =>
     `<span title="${CLASS_LABELS[c]}"><i style="background:var(${
-      CLASS_COLOURS[c]})"></i>${CLASS_LABELS[c]}</span>`).join('');
+      CLASS_COLOURS[c]})"></i>${CLASS_LABELS[c]}</span>`).join('')
+    + coverageLabel(S.profile);
 }
 
 async function runVerify() {

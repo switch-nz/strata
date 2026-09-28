@@ -1,3 +1,4 @@
+import collections
 import itertools
 import re
 from . import entropy as entropy_mod
@@ -14,21 +15,20 @@ CLASS_NAMES = {
     DENSE: "dense", ENCRYPTED: "high entropy", SPARSE_FF: "0xFF fill",
 }
 
+_PRINTABLE = bytes(range(32, 127)) + b"\t\n\r"
+
 def classify(buf):
     if not buf:
         return ZERO, 0.0
-    counts = bytearray(256)
     counts = [0] * 256
-    printable = 0
-    for b in buf:
-        counts[b] += 1
-        if 32 <= b < 127 or b in (9, 10, 13):
-            printable += 1
+    for b, c in collections.Counter(buf).items():
+        counts[b] = c
     n = len(buf)
     if counts[0] == n:
         return ZERO, 0.0
     if counts[255] == n:
         return SPARSE_FF, 0.0
+    printable = n - len(bytes(buf).translate(None, _PRINTABLE))
     h = entropy_mod.from_counts(counts, n)
     if counts[0] / n > 0.9:
         return ZERO, h
@@ -40,6 +40,13 @@ def classify(buf):
         return DENSE, h
     return STRUCTURED, h
 
+# Up to this many bytes in scope, every byte is read and classified. Above
+# it, each bucket is classified from WINDOWS evenly spaced reads of `sample`
+# bytes, so something at the far end of a bucket is still seen: reading all
+# of a terabyte disk would take hours, and the strip is for orientation.
+FULL_READ_MAX = 64 << 20
+WINDOWS = 16
+
 def profile(source, buckets=2048, sample=4096, start=0, end=None,
             progress=None):
     end = end if end is not None else source.size
@@ -48,18 +55,40 @@ def profile(source, buckets=2048, sample=4096, start=0, end=None,
         return {"buckets": [], "bucket_size": 0, "start": start, "end": end}
     buckets = max(16, min(buckets, 8192))
     step = span / buckets
+    whole = span <= FULL_READ_MAX
     out = []
+    read = 0
     for i in range(buckets):
-        off = start + int(i * step)
-        n = min(sample, max(1, int(step)))
-        buf = source.read_at(off, n)
+        lo = start + int(i * step)
+        hi = min(end, start + int((i + 1) * step))
+        if hi <= lo:
+            hi = min(end, lo + 1)
+        width = hi - lo
+        if whole or width <= sample * WINDOWS:
+            buf = source.read_at(lo, width)
+        else:
+            gap = (width - sample) / (WINDOWS - 1)
+            buf = b"".join(source.read_at(lo + int(k * gap), sample)
+                           for k in range(WINDOWS))
+        read += len(buf)
         cls, h = classify(buf)
         out.append([cls, round(h, 2)])
         if progress and i % 64 == 0:
             progress(i / buckets)
+    full = read >= span
     return {"buckets": out, "bucket_size": step, "start": start, "end": end,
-            "sample": sample, "classes": CLASS_NAMES,
-            "note": "Sampled profile — %d bytes read per bucket." % sample}
+            "sample": None if full else sample,
+            "windows": None if full else WINDOWS,
+            "bytes_read": read, "coverage": min(1.0, read / span),
+            "classes": CLASS_NAMES,
+            "note": ("Every byte in range was read and classified."
+                     if full else
+                     "Each bucket classified from %d evenly spaced reads of "
+                     "%d bytes: %s of the range was read."
+                     % (WINDOWS, sample, _percent(read / span)))}
+
+def _percent(f):
+    return "%.3g%%" % (100 * f) if f < 0.01 else "%.1f%%" % (100 * f)
 
 ENCODINGS = {
     "ascii": lambda s: s.encode("latin-1", "ignore"),

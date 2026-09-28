@@ -1095,6 +1095,7 @@ em.kind.notable    { color: var(--amber); }
   color: var(--dimmer);
 }
 .core-legend i { display: block; height: 3px; border-radius: 1px; }
+.core-legend .core-coverage { margin-top: 2px; color: var(--dim); cursor: help; }
 
 .tray { position: relative; flex: 0 0 auto; }
 .tray-toggle {
