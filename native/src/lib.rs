@@ -1,7 +1,7 @@
 //! Native crypto sidecar for Strata.
 //!
-//! Exposes exactly three operations plus a self-test over a C ABI consumed
-//! by `engine/native.py` (ctypes).  Error codes are a mirror of the table in
+//! Exposes four operations plus a self-test over a C ABI consumed by
+//! `engine/native.py` (ctypes).  Error codes are a mirror of the table in
 //! that file — change them together.
 //!
 //! All buffers are caller-allocated; no global state.  The only allocation
@@ -292,6 +292,71 @@ fn cbc_decrypt_inner<A: BlockDecrypt + KeyInit + BlockSizeUser<BlockSize = U16>>
     STRATA_OK
 }
 
+/// Marvin32, the hash Windows uses for registry hive and transaction-log
+/// checksums (`engine/reglog.py` decides whether a dirty hive's log is
+/// trustworthy from it). Same algorithm as that module's pure-Python
+/// `marvin32`/`_mix`/`_rotl` — kept as the correctness reference and the
+/// fallback when this sidecar is unavailable, since a large dirty log
+/// (tens of megabytes, one Python-level operation per 4 input bytes) is
+/// what made replaying it slow enough to be worth this.
+#[inline]
+fn marvin32_mix(lo: &mut u32, hi: &mut u32, val: u32) {
+    *lo = lo.wrapping_add(val);
+    *hi ^= *lo;
+    *lo = lo.rotate_left(20).wrapping_add(*hi);
+    *hi = hi.rotate_left(9) ^ *lo;
+    *lo = lo.rotate_left(27).wrapping_add(*hi);
+    *hi = hi.rotate_left(19);
+}
+
+fn marvin32(data: &[u8], seed: u64) -> u64 {
+    let mut lo = (seed & 0xFFFF_FFFF) as u32;
+    let mut hi = (seed >> 32) as u32;
+    let mut chunks = data.chunks_exact(4);
+    for chunk in &mut chunks {
+        marvin32_mix(&mut lo, &mut hi, u32::from_le_bytes(chunk.try_into().unwrap()));
+    }
+    let rest = chunks.remainder();
+    let final_word: u32 = match rest.len() {
+        0 => 0x80,
+        1 => 0x8000 | rest[0] as u32,
+        2 => 0x80_0000 | u16::from_le_bytes([rest[0], rest[1]]) as u32,
+        3 => {
+            0x8000_0000
+                | ((rest[2] as u32) << 16)
+                | u16::from_le_bytes([rest[0], rest[1]]) as u32
+        }
+        _ => unreachable!("chunks_exact(4)'s remainder is under 4 bytes"),
+    };
+    marvin32_mix(&mut lo, &mut hi, final_word);
+    marvin32_mix(&mut lo, &mut hi, 0);
+    ((hi as u64) << 32) | lo as u64
+}
+
+/// `data` (`data_len` bytes, may be empty) hashed with Marvin32, seeded
+/// with `seed`; writes the 64-bit result through `out`.
+#[no_mangle]
+pub extern "C" fn strata_marvin32(
+    data: *const u8,
+    data_len: usize,
+    seed: u64,
+    out: *mut u64,
+) -> i32 {
+    if out.is_null() || (data.is_null() && data_len > 0) {
+        return STRATA_ERR_PARAMS;
+    }
+    let slice: &[u8] = if data_len > 0 {
+        unsafe { std::slice::from_raw_parts(data, data_len) }
+    } else {
+        &[]
+    };
+    let result = marvin32(slice, seed);
+    unsafe {
+        *out = result;
+    }
+    STRATA_OK
+}
+
 /// Load-time self-test: known-answer vectors, not consistency checks.
 ///
 /// Each primitive is checked against a published answer, so a build that
@@ -305,6 +370,9 @@ fn cbc_decrypt_inner<A: BlockDecrypt + KeyInit + BlockSizeUser<BlockSize = U16>>
 /// * AES-XTS -- IEEE 1619-2007 vectors 1 and 2 (AES-128), through
 ///   `strata_xts_decrypt`. Vector 2 uses a nonzero sector, which exercises
 ///   the tweak encoding.
+/// * Marvin32 -- one of the .NET runtime's own Marvin test vectors (seed
+///   0x004FB61A001BDBCC), the same one `tests/test_registry.py` checks the
+///   pure-Python implementation against.
 ///
 /// Broader agreement with the pure-Python implementation (key sizes, sector
 /// sizes, ciphertext stealing being refused) is checked by
@@ -401,6 +469,19 @@ pub extern "C" fn strata_selftest() -> i32 {
         xts_out.as_mut_ptr(),
     ) != STRATA_OK
         || xts_out != [0x44u8; 32]
+    {
+        return STRATA_ERR_SELFTEST;
+    }
+
+    // .NET runtime Marvin tests, seed 0x004FB61A001BDBCC: 7-byte input.
+    const MARVIN_SEED: u64 = 0x004F_B61A_001B_DBCC;
+    let marvin_input: [u8; 7] = [0xab, 0x42, 0x7e, 0xa8, 0xd1, 0x0f, 0xc7];
+    let mut marvin_out: u64 = 0;
+    if strata_marvin32(
+        marvin_input.as_ptr(), marvin_input.len(),
+        MARVIN_SEED, &mut marvin_out,
+    ) != STRATA_OK
+        || marvin_out != 0xE118_47E4_F067_8C41
     {
         return STRATA_ERR_SELFTEST;
     }

@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from engine.crypto import aes, argon2                     # noqa: E402
 from engine.crypto.argon2 import derive, OutOfMemory      # noqa: E402
-from engine import native                                 # noqa: E402
+from engine import native, reglog                          # noqa: E402
 from engine.native import NativeError                     # noqa: E402
 
 NATIVE = native.available()
@@ -87,6 +87,24 @@ class Differential(unittest.TestCase):
                 self.assertEqual(got, want)
 
     @unittest.skipUnless(NATIVE, "native sidecar not available")
+    def test_marvin32_differential_seeded(self):
+        rng = random.Random(0x4A12)
+        # Exhaustive small sizes (covers every tail-byte-count branch) plus
+        # randomized larger ones up to a size worth mixing many words, and
+        # a handful of seeds (including the module's own default one, used
+        # for hive/log checksums).
+        seeds = (reglog.MARVIN_SEED, 0, 1, 0xFFFFFFFFFFFFFFFF,
+                 0x004FB61A001BDBCC)
+        lengths = list(range(0, 20)) + [rng.randrange(20, 5000)
+                                        for _ in range(30)]
+        for seed in seeds:
+            for n in lengths:
+                data = bytes(rng.randrange(256) for _ in range(n))
+                with self.subTest(seed=seed, n=n):
+                    self.assertEqual(native.marvin32(data, seed),
+                                     reglog._marvin32_py(data, seed))
+
+    @unittest.skipUnless(NATIVE, "native sidecar not available")
     def test_selftest_export_returns_zero(self):
         self.assertEqual(_raw_selftest(), 0)
 
@@ -156,6 +174,28 @@ class PublishedAesVectors(unittest.TestCase):
             self.CBC_PT)
 
 
+class PublishedMarvin32Vectors(unittest.TestCase):
+    """The .NET runtime's own Marvin32 test vectors (seed
+    0x004FB61A001BDBCC), the same ones tests.test_registry.Marvin32 checks
+    the pure implementation against, here for the native one too. One is
+    compiled into the sidecar's load-time self-test."""
+
+    SEED = 0x004FB61A001BDBCC
+    VECTORS = (
+        (b"\xaf", 0x48E73FC77D75DDC1),
+        (b"\xe7\x0f", 0xB5F6E1FC485DBFF8),
+        (b"\x37\xf4\x95", 0xF0B07C789B8CF7E8),
+        (b"\x15\x3f\xb7\x98\x26", 0xE6C08C6DA2AFA997),
+        (b"\x09\x32\xe6\x24\x6c\x47", 0x6F04BF1A5EA24060),
+        (b"\xab\x42\x7e\xa8\xd1\x0f\xc7", 0xE11847E4F0678C41),
+    )
+
+    @unittest.skipUnless(NATIVE, "native sidecar not available")
+    def test_native_matches_dotnet_vectors(self):
+        for data, want in self.VECTORS:
+            self.assertEqual(native.marvin32(data, self.SEED), want, data)
+
+
 class FallbackContract(unittest.TestCase):
     """Runs everywhere: with native forced unavailable, behavior is
     exactly the pure-Python one."""
@@ -184,6 +224,22 @@ class FallbackContract(unittest.TestCase):
             native._State.loaded = saved["loaded"]
             native._State.lib = saved["lib"]
 
+    def test_reglog_marvin32_falls_back_when_native_unavailable(self):
+        saved = dict(native._State.__dict__)
+        try:
+            native._State.failed = True
+            native._State.loaded = False
+            native._State.lib = None
+            rng = random.Random(0x9001)
+            for n in (0, 1, 7, 4000):
+                data = bytes(rng.randrange(256) for _ in range(n))
+                self.assertEqual(reglog.marvin32(data),
+                                 reglog._marvin32_py(data))
+        finally:
+            native._State.failed = saved["failed"]
+            native._State.loaded = saved["loaded"]
+            native._State.lib = saved["lib"]
+
     def test_native_entries_refuse_when_unavailable(self):
         saved = dict(native._State.__dict__)
         try:
@@ -201,6 +257,8 @@ class FallbackContract(unittest.TestCase):
                                      m_kib=32, p=4, out_len=32, kind=2,
                                      version=0x13, secret=b"",
                                      associated=b"")
+            with self.assertRaises(NativeError):
+                native.marvin32(b"\x00" * 16, 0)
         finally:
             native._State.failed = saved["failed"]
             native._State.loaded = saved["loaded"]

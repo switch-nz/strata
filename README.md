@@ -186,6 +186,14 @@ python3 run.py --port 9000 --host 0.0.0.0       # serve the interface to another
 Preferences are kept per examiner beside the application, never in a case.
 Set `STRATA_CONFIG_DIR` to put them somewhere else.
 
+An optional native module speeds up encrypted-volume unlocking and reading,
+and validating a dirty registry hive's transaction log. It ships as a
+separate per-release download (`strata-native-<version>.zip`); extract it
+into the Strata folder and it is picked up automatically. No examiner needs
+a Rust toolchain to use it — only to build it from source, which is
+optional and only for maintainers. Without it, Strata runs exactly as
+above, just slower for those two things; nothing else changes.
+
 ---
 
 ## Status and validation

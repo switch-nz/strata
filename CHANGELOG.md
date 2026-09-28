@@ -44,6 +44,17 @@ records, not how the code changed.
   is not the exact disk it was made from. The exhibit's details name the parent and how it was found, and list
   both files.
 
+### Changed
+
+- **Opening a dirty registry hive is much faster when the optional native
+  module is installed.** Validating a hive's transaction log before
+  replaying it uses Marvin32, Windows' own checksum for the format; done in
+  pure Python this could take the better part of a minute for a large,
+  heavily dirty hive (one with tens of megabytes of unflushed log). The
+  native sidecar from 0.5.1 now covers this too — measured over 500x faster
+  on synthetic data, with byte-identical results. No native module: no
+  change in behaviour, just the same pure-Python speed as before.
+
 ### Fixed
 
 - **Running "Windows event logs" from Run artefacts always failed.** The

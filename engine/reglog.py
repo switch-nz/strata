@@ -1,5 +1,7 @@
 import struct
 
+from . import native
+
 MASK = 0xFFFFFFFF
 MARVIN_SEED = 0x82EF4D887A4E55C5
 
@@ -21,12 +23,36 @@ def _mix(lo, hi, val):
     return lo, hi
 
 def marvin32(data, seed=MARVIN_SEED):
+    """Marvin32, seeded — Windows' checksum for registry hive and
+    transaction-log entries. Dirty logs run to tens of megabytes, and this
+    is a pure-Python fallback for a hash that mixes 4 bytes at a time, so
+    the native sidecar (identical output, verified below and at its own
+    load-time self-test) is used when available."""
+    if native.available():
+        try:
+            return native.marvin32(bytes(data), seed)
+        except native.NativeError:
+            pass
+    return _marvin32_py(data, seed)
+
+def _marvin32_py(data, seed=MARVIN_SEED):
     lo = seed & MASK
     hi = (seed >> 32) & MASK
-    i, n = 0, len(data)
-    while i + 4 <= n:
-        lo, hi = _mix(lo, hi, struct.unpack_from("<I", data, i)[0])
-        i += 4
+    n = len(data)
+    whole = n - (n % 4)
+    if whole:
+        # Same as calling _mix(lo, hi, val) per word, inlined and fed from
+        # one bulk unpack instead of 4 bytes' worth of Python-level call
+        # overhead per word — the checksum can cover a whole dirty hive or
+        # transaction log (tens of MB), where that overhead dominates.
+        for (val,) in struct.iter_unpack("<I", memoryview(data)[:whole]):
+            lo = (lo + val) & MASK
+            hi ^= lo
+            lo = (((lo << 20) & MASK | (lo >> 12)) + hi) & MASK
+            hi = ((hi << 9) & MASK | (hi >> 23)) ^ lo
+            lo = (((lo << 27) & MASK | (lo >> 5)) + hi) & MASK
+            hi = (hi << 19) & MASK | (hi >> 13)
+    i = whole
     rest = n - i
     if rest == 0:
         final = 0x80

@@ -1,12 +1,15 @@
-"""ctypes loader for the optional native crypto sidecar.
+"""ctypes loader for the optional native sidecar.
 
-Strata is pure Python by contract, but AES-XTS sector decrypts and Argon2
-unlocks dominate encrypted-volume work.  This module loads a small Rust
-``cdylib`` (source in ``native/``; ``native/build.sh`` or ``build.ps1``
-places the built library in ``engine/native/<target-triple>/``, which is not
-checked in) and re-exports the exact operations the
-pure-Python modules implement, so ``engine.crypto.aes`` and
-``engine.crypto.argon2`` can swap implementations behind their existing
+Strata is pure Python by contract, but AES-XTS sector decrypts, Argon2
+unlocks, Marvin32 checksums (over a dirty registry hive's transaction log,
+which can run to tens of megabytes) and fuzzy hashing (run on every file in
+a bulk hashing job) dominate their respective code paths.  This module
+loads a small Rust ``cdylib`` (source in ``native/``; ``native/build.sh``
+or ``build.ps1`` places the built library in
+``engine/native/<target-triple>/``, which is not checked in) and re-exports
+the exact operations the pure-Python modules implement, so
+``engine.crypto.aes``, ``engine.crypto.argon2``, ``engine.reglog`` and
+``engine.fuzzyhash`` can swap implementations behind their existing
 signatures.
 
 Contract (mirrors the plan's "API parity rule"):
@@ -31,7 +34,7 @@ import platform
 import struct
 
 __all__ = ["available", "NativeError", "argon2_derive", "aes_xts_decrypt",
-           "aes_cbc_decrypt"]
+           "aes_cbc_decrypt", "marvin32"]
 
 _LIBRARY_NAME = {
     "Linux": "libstrata_native.so",
@@ -143,6 +146,14 @@ def _bind(lib):
         ctypes.c_char_p,           # out buffer
     ]
     lib.strata_cbc_decrypt.restype = i32
+
+    lib.strata_marvin32.argtypes = [
+        ctypes.c_char_p,           # data
+        usize,                     # data_len
+        u64,                       # seed
+        ctypes.POINTER(u64),       # out (one 64-bit word)
+    ]
+    lib.strata_marvin32.restype = i32
     return lib
 
 
@@ -214,6 +225,19 @@ def aes_xts_decrypt(key1, key2, start_sector, data, sector_size=None):
     if rc != _OK:
         raise NativeError(_code_name(rc))
     return out.raw
+
+
+def marvin32(data, seed):
+    """Marvin32 (the registry/transaction-log checksum) via the sidecar;
+    raises NativeError. `seed` is the full 64-bit seed; returns a 64-bit
+    unsigned int, same as engine.reglog's pure-Python implementation."""
+    lib = _require()
+    out = ctypes.c_uint64(0)
+    rc = lib.strata_marvin32(data, len(data), seed & 0xFFFFFFFFFFFFFFFF,
+                             ctypes.byref(out))
+    if rc != _OK:
+        raise NativeError(_code_name(rc))
+    return out.value
 
 
 def aes_cbc_decrypt(key, iv, data):
