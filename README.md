@@ -44,7 +44,7 @@ unallocated space are reachable throughout.
 | Filesystem | What is read |
 |---|---|
 | **NTFS** | MFT records and attributes, resident and non-resident; data runs; LZNT1-compressed, sparse and encrypted attributes; alternate data streams; `$STANDARD_INFORMATION` and `$FILE_NAME` timestamps separately; the directory index; deleted records |
-| **FAT12/16/32** | boot parameter block, cluster chains, long filenames, deleted entries with the first character recovered, file slack, allocated-extent map |
+| **FAT12/16/32** | boot parameter block, cluster chains, long filenames (checked against their short name's checksum), deleted entries with the first character recovered from a surviving long name, file slack, allocated-extent map |
 | **exFAT** | allocation bitmap, up-case table, cluster chains including contiguous (NoFatChain) streams, deleted entries, slack |
 | **ext2/3/4** | inodes, extent trees and legacy block maps, inline data, symlinks, and **jbd2 journal recovery** — superseded metadata recovered from the journal is reported as such |
 | **APFS** | container superblock, object map, B-tree walking, volume records, file extents, and the allocation map |

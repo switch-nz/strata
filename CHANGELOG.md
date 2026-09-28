@@ -13,6 +13,13 @@ records, not how the code changed.
 
 ### Fixed
 
+- **A FAT file could be listed under another file's long name.** Long-name
+  entries left behind by a deleted file were attached to whatever short entry
+  followed them, so a live `B.TXT` could appear as the deleted file's long
+  name. Long names are now attached only when their checksum matches the
+  short name they were written for; one that doesn't is not shown against
+  any file.
+
 - **A single raw file with a numeric extension was reported as an incomplete
   split set.** Opening `capture.2024` on its own said piece `capture.0001` was
   missing and that the image started partway through a disk. With no other

@@ -18,6 +18,38 @@ def _dos_time(date, time_, tenths=0):
     except ValueError:
         return None
 
+def _lfn_checksum(short11):
+    s = 0
+    for c in short11:
+        s = (((s & 1) << 7) + (s >> 1) + c) & 0xFF
+    return s
+
+# Characters a short (8.3) name may begin with.
+_SHORT_FIRST = set(b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'()-@^_`{}~") \
+    | set(range(0x80, 0x100))
+
+def _lfn_belongs(lfn, short11, deleted):
+    """Whether the long-name entries gathered before a short entry are its
+    own. Each carries the checksum of the short name it was written for, so
+    leftover entries from a deleted file are not pinned on whatever short
+    entry now follows them."""
+    sums = {c for _, _, c in lfn}
+    if len(sums) != 1:
+        return False
+    want = sums.pop()
+    if any((seq == 0xE5) != deleted for seq, _, _ in lfn):
+        return False
+    if not deleted:
+        return _lfn_checksum(short11) == want
+    # Deletion overwrote the short name's first byte. The checksum still
+    # fixes it (each step is a bijection), so the long name belongs only if
+    # the byte it implies is one a short name could begin with.
+    rest = short11[1:]
+    for first in _SHORT_FIRST:
+        if _lfn_checksum(bytes([first]) + rest) == want:
+            return True
+    return False
+
 class FatFS:
     name = "FAT"
     root_node = 0
@@ -191,7 +223,13 @@ class FatFS:
                 seq = e[0]
                 part = (e[1:11] + e[14:26] + e[28:32]).decode("utf-16-le", "replace")
                 part = part.split("\uffff")[0].split("\x00")[0]
-                lfn.append((seq, part))
+                if lfn and (seq & 0x40 and seq != 0xE5
+                            or lfn[-1][2] != e[13]
+                            or (lfn[-1][0] == 0xE5) != (seq == 0xE5)):
+                    # A new name begins here: the entries gathered so far
+                    # belong to no short entry.
+                    lfn = []
+                lfn.append((seq, part, e[13]))
                 continue
             deleted = e[0] == 0xE5
             short = e[0:8].decode("latin-1").rstrip()
@@ -200,15 +238,15 @@ class FatFS:
                 short = "_" + short[1:]
             sname = short + ("." + ext if ext else "")
             long_name = ""
-            if lfn:
-                if any(seq == 0xE5 for seq, _ in lfn):
+            if lfn and _lfn_belongs(lfn, e[0:11], deleted):
+                if deleted:
                     # Deletion overwrites every sequence byte with 0xE5, so
                     # order comes from the layout instead: VFAT stores the
                     # parts last-first, immediately before the short entry.
-                    parts = [p for _, p in reversed(lfn)]
+                    parts = [p for _, p, _ in reversed(lfn)]
                 else:
-                    parts = [p for _, p in sorted(lfn,
-                                                  key=lambda x: x[0] & 0x3F)]
+                    parts = [p for _, p, _ in sorted(
+                        lfn, key=lambda x: x[0] & 0x3F)]
                 long_name = "".join(parts)
             lfn = []
             if sname in (".", "..") or attr & 0x08:
