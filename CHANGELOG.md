@@ -11,7 +11,7 @@ records, not how the code changed.
 
 ## [Unreleased]
 
-## [0.6.1] - 2026-09-26
+## [0.6.1] - 2026-09-28
 
 Adds reading of ANSI (32-bit) PST files and corrects how PST files that use
 the cyclic ("high") encoding are decoded, which was wrong for Unicode files
