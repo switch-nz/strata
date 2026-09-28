@@ -28,7 +28,8 @@ is a synthetic volume: every byte of it was generated for this screenshot.*
 **Logical evidence** — a folder, a zip, or a single file opened as an exhibit
 in its own right.
 
-**Volume layout** — MBR and GPT, including damaged tables, protective-MBR
+**Volume layout** — MBR, including logical partitions in extended
+partitions, and GPT, including damaged tables, protective-MBR
 cases, and discrepancies between the partition table and the boot record.
 Unpartitioned gaps are shown rather than hidden.
 

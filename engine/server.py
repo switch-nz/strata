@@ -4637,6 +4637,8 @@ def _triage(s):
             if not p.get("allocated"):
                 gap_bytes += p.get("size") or 0
                 continue
+            if p.get("container"):
+                continue            # its logical partitions are listed
             det = p.get("detected")
             if det in ("BitLocker", "LUKS"):
                 enc.append({"exhibit": ev.label, "slot": p["slot"],

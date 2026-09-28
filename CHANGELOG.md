@@ -13,6 +13,16 @@ records, not how the code changed.
 
 ### Fixed
 
+- **Logical partitions on MBR disks were not listed.** Only the four primary
+  entries of an MBR were read, so the volumes in an extended partition (the
+  logical drives on many older Windows and Linux disks) never appeared; the
+  extended partition showed as one volume with no filesystem. The chain of
+  extended boot records is now followed and each logical partition is listed
+  as MBR 5, MBR 6 and so on, and can be opened like any other volume. The
+  extended partition is shown as their container, space inside it that no
+  logical partition uses is shown as unused, and a broken or looping chain is
+  reported as a finding.
+
 - **NTFS and exFAT files returned stale disk content past their valid data
   length.** A file's valid data length marks where the data it actually
   wrote ends; Windows reads everything after it as zeros. Strata returned
