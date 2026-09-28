@@ -92,13 +92,15 @@ def decode_runlist(data, cluster_count=None, findings=None):
             break
         length = int.from_bytes(data[i:i + len_size], "little", signed=False)
         i += len_size
-        # A run list is a chain of deltas, so one bogus entry poisons every
-        # entry after it. Stop at the first one rather than carry on from a
-        # base we no longer trust.
-        if cluster_count and length > cluster_count:
-            _note(findings, RUN_TOO_LONG)
-            break
         if off_size:
+            # A run list is a chain of deltas, so one bogus entry poisons
+            # every entry after it. Stop at the first one rather than carry
+            # on from a base we no longer trust. Only a run that occupies
+            # clusters is bounded by the volume: a sparse run is a hole, and
+            # a sparse file's holes may add up to more than the volume holds.
+            if cluster_count and length > cluster_count:
+                _note(findings, RUN_TOO_LONG)
+                break
             delta = int.from_bytes(data[i:i + off_size], "little", signed=True)
             i += off_size
             lcn += delta

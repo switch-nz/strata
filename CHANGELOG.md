@@ -11,6 +11,20 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A search for several terms lost hits where two terms matched at the same
+  place.** Searching raw media for `pass` and `password` together reported
+  only the `pass` hit wherever `password` appeared, so the longer term's hits
+  were missing from the results and the saved search. Every term's hit is now
+  kept.
+- **Sparse NTFS files whose holes were larger than the volume read back
+  empty.** A hole in a sparse file takes no space on disk and can span more
+  clusters than the volume holds, but it was treated as a damaged run: the
+  file's content after it was dropped and a finding wrongly said the run list
+  was corrupt. Holes are now read as zeros whatever their length; a run that
+  occupies clusters is still checked against the volume.
+
 ## [0.6.1] - 2026-09-28
 
 Adds reading of ANSI (32-bit) PST files and corrects how PST files that use

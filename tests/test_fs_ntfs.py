@@ -219,6 +219,16 @@ class NtfsOnGpt(unittest.TestCase):
         self.assertEqual(findings, [ntfs.RUN_OUT_OF_VOLUME])
         self.assertEqual(ntfs.decode_runlist(b"\x44\x01"), [])
 
+    def test_decode_runlist_sparse_run_longer_than_volume(self):
+        # A sparse file's hole can span more clusters than the volume holds;
+        # only runs that occupy clusters are bounded by it.
+        # (5 x2) (sparse x300) (+10 -> 15 x1), on a 20-cluster volume
+        findings = []
+        raw = b"\x11\x02\x05\x02\x2C\x01\x11\x01\x0A\x00"
+        self.assertEqual(ntfs.decode_runlist(raw, 20, findings),
+                         [(5, 2), (None, 300), (15, 1)])
+        self.assertEqual(findings, [])
+
     # -- alternate data streams ---------------------------------------------
 
     def test_alternate_data_streams(self):

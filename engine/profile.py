@@ -120,7 +120,9 @@ def search(source, terms, encodings=("ascii", "utf-16le"), regex=False,
 
     seen, out = set(), []
     for h in sorted(hits, key=lambda x: x["offset"]):
-        key = (h["offset"], h["encoding"])
+        # Windows overlap, so one match can be found twice; two terms that
+        # match at the same offset are two hits, not one.
+        key = (h["offset"], h["encoding"], h["term"])
         if key not in seen:
             seen.add(key)
             out.append(h)
