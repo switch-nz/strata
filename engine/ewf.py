@@ -585,6 +585,14 @@ def discover_raw_segments(path):
                    _piece_name(prefix, odd[0], style, widths[odd[0]])))
     missing = _piece_name(prefix, first + len(run), style, width)
     beyond = sorted(n for n in widths if n > first + len(run))
+    if opened not in run and len(widths) == 1:
+        # Nothing beside it is named as another piece, so there is no set to
+        # say is incomplete: capture.2024 is as likely a year as a piece.
+        return [path], [
+            "%s is named like piece %d of a split raw set, but no other "
+            "piece is beside it, so it is read as a single image. If it was "
+            "part of a set, it starts partway through the disk."
+            % (name, opened)]
     if opened not in run:
         return [path], [
             "%s is read on its own: its split raw set is missing %s, so "

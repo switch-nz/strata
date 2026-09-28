@@ -516,6 +516,14 @@ class Raw(TempDir):
         self.assertIn("read on its own", img.findings[0])
         self.assertIn("missing split.001", img.findings[0])
 
+    def test_lone_file_with_a_numeric_extension_is_not_called_incomplete(self):
+        self.write("capture.2024", MEDIA[:2000])
+        img = self.open(os.path.join(self.dir, "capture.2024"))
+        self.assertEqual(img.info()["segments"], ["capture.2024"])
+        self.assertEqual(len(img.findings), 1)
+        self.assertIn("no other piece is beside it", img.findings[0])
+        self.assertNotIn("missing", img.findings[0])
+
     def test_piece_of_the_wrong_size_is_reported(self):
         self.write_split(3000)
         self.write("split.002", MEDIA[3000:5000])

@@ -13,6 +13,12 @@ records, not how the code changed.
 
 ### Fixed
 
+- **A single raw file with a numeric extension was reported as an incomplete
+  split set.** Opening `capture.2024` on its own said piece `capture.0001` was
+  missing and that the image started partway through a disk. With no other
+  piece beside it, the finding now says only that the file is named like a
+  piece and is read as a single image.
+
 - **`--browser` opened the browser before the interface was listening**, so
   a fast browser could show "connection refused". It now opens once the port
   is accepting connections, and it also works with `--host 0.0.0.0` (it opens
