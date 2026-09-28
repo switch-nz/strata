@@ -657,7 +657,12 @@ class NtfsFS:
                 if progress is not None:
                     progress(n / total)
             rec = self.record(n, cache=False)
-            if not rec:
+            if not rec or rec.base_reference:
+                # An extension record: overflow attributes for a different
+                # (base) record, reached through that base's $ATTRIBUTE_LIST,
+                # not a file or folder of its own. Listing it here as well
+                # duplicated it under the root with a numeric placeholder
+                # name, since it carries no $FILE_NAME of its own.
                 continue
             name = rec.best_name()
             streams = []

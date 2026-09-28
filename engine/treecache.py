@@ -2,7 +2,7 @@ import json
 import os
 import sqlite3
 
-VERSION = 1
+VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);

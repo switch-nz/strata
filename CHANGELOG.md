@@ -11,6 +11,18 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+### Fixed
+
+- **NTFS: a file whose attributes overflowed into another MFT record was
+  also listed as a bogus file of its own**, named `<record number>` since it
+  has no `$FILE_NAME`, cluttering the root of the filesystem tree. This
+  happens for any file with an `$ATTRIBUTE_LIST` — heavily fragmented files,
+  ones with many alternate data streams, or (what turned up the bug) a
+  volume with enough files that its own directories need one. Found on a
+  real multi-hundred-gigabyte NTFS volume, where it produced tens of
+  thousands of spurious entries. A previously cached filesystem tree is
+  rebuilt the next time it is opened.
+
 ## [0.6.1] - 2026-09-28
 
 Adds reading of ANSI (32-bit) PST files and corrects how PST files that use
