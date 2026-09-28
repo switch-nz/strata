@@ -13,6 +13,17 @@ records, not how the code changed.
 
 ### Fixed
 
+- **Regular-expression searches never looked at UTF-16LE text.** With Regex
+  ticked, the encoding boxes were ignored and only single-byte text was
+  searched, in raw media and in file contents alike, while the empty-result
+  hint still suggested ticking UTF-16LE. A regex is now matched against
+  UTF-16LE text too (at either byte alignment) when that box is ticked, and
+  each hit says which encoding it was found in.
+- **A raw search that reached its 5,000-hit limit stopped without saying
+  so.** It now says the limit was reached and gives the offset up to which
+  the results are complete. Terms later in the list are no longer the ones
+  that lose out when the limit is reached.
+
 - **A FAT file could be listed under another file's long name.** Long-name
   entries left behind by a deleted file were attached to whatever short entry
   followed them, so a live `B.TXT` could appear as the deleted file's long

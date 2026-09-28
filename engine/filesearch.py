@@ -1,5 +1,7 @@
 import re
 
+from . import profile
+
 DEFAULT_SCAN_BYTES = 64 << 20
 MAX_CONTEXT = 60
 
@@ -139,6 +141,8 @@ def search(fs, terms, root_node=5, mode="both", encodings=("ascii", "utf-16le"),
         try:
             rx = re.compile("|".join(terms),
                             0 if case_sensitive else re.IGNORECASE)
+            rx_encodings = [enc for enc in encodings
+                            if enc in profile.REGEX_ENCODINGS]
         except re.error as exc:
             return {"error": "Bad regular expression: %s" % exc, "hits": [],
                     "searched": 0}
@@ -198,13 +202,25 @@ def search(fs, terms, root_node=5, mode="both", encodings=("ascii", "utf-16le"),
         more = 0
 
         if rx is not None:
-            for m in rx.finditer(data.decode("latin-1")):
+            found = []
+            for enc in rx_encodings:
+                if enc == "ascii":
+                    found.extend((m.start(), m.end() - m.start(), m.group(0),
+                                  enc)
+                                 for m in rx.finditer(data.decode("latin-1")))
+                    continue
+                for align in (0, 1):
+                    found.extend((align + 2 * m.start(),
+                                  2 * (m.end() - m.start()), m.group(0), enc)
+                                 for m in rx.finditer(
+                                     profile.utf16le_text(data, align)))
+            found.sort()
+            for pos, length, matched, enc in found:
                 if in_file >= max_per_file:
                     more += 1
                     continue
-                hits.append(_hit(e, "content", _context(data, m.start(),
-                                                        len(m.group(0))),
-                                 m.group(0), m.start()))
+                hits.append(_hit(e, "content", _context(data, pos, length),
+                                 matched, pos, enc))
                 in_file += 1
                 if len(hits) >= max_hits:
                     break

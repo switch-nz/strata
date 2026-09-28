@@ -5457,7 +5457,12 @@ async function doFind() {
     box.innerHTML = `<p class="empty">${txt('help.matches_windows_stores_most_text_utf_16le')}</p>`;
     return;
   }
-  box.innerHTML = r.hits.map((h, i) => {
+  const limit = r.truncated
+    ? `<p class="empty">${esc(txt('ui.find.hit_limit', {
+        n: r.hits.length.toLocaleString(),
+        offset: '0x' + fmt.hex(r.complete_to, 8) }))}</p>`
+    : '';
+  box.innerHTML = limit + r.hits.map((h, i) => {
     const pre = esc(h.context.slice(0, h.match_at));
     const mid = esc(h.context.slice(h.match_at, h.match_at + h.length));
     const post = esc(h.context.slice(h.match_at + h.length));

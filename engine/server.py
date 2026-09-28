@@ -2577,16 +2577,22 @@ class Handler(BaseHTTPRequestHandler):
             if not terms:
                 return self._send(400, {"error": _t("server.search.enter_least_one_term")})
             encs = body.get("encodings", ["ascii", "utf-16le"])
+            if not encs:
+                return self._send(400, {"error": _t("server.search.no_encoding")})
             rx = bool(body.get("regex"))
 
             def run(progress):
+                cov = {}
                 hits = profile_mod.search(src, terms, encodings=encs, regex=rx,
                                           case_sensitive=body.get("case_sensitive",
                                                                   False),
-                                          progress=progress)
+                                          progress=progress, coverage=cov)
                 s.case.log("search.run", {"terms": terms, "encodings": encs,
-                                          "regex": rx, "hits": len(hits)})
-                return {"hits": hits, "base": part or 0}
+                                          "regex": rx, "hits": len(hits),
+                                          "truncated": cov["truncated"]})
+                return {"hits": hits, "base": part or 0,
+                        "truncated": cov["truncated"],
+                        "complete_to": cov["complete_to"]}
             return self._send(200, s.start_task("Search evidence", run))
 
         if path == "/api/timeline":
