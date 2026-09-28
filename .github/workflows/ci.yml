@@ -94,8 +94,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # native_runner: the runner's own architecture matches the build
+          # target, so the built library can actually be loaded and run
+          # here (not just compiled) -- see "Run the sidecar's self-test"
+          # below. False for x86_64-apple-darwin, cross-compiled on the
+          # arm64 macos-latest runner.
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            native_runner: true
           # Native arm64 runner: rustc 1.98 always passes
           # -Wl,--fix-cortex-a53-843419 when cross-linking from x86_64
           # (pre-link-arg in the target spec), and the x86_64-hosted
@@ -103,12 +109,16 @@ jobs:
           # on the target arch avoids the flag entirely.
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            native_runner: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            native_runner: true
           - os: macos-latest
             target: x86_64-apple-darwin
+            native_runner: false
           - os: macos-latest
             target: aarch64-apple-darwin
+            native_runner: true
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -117,6 +127,36 @@ jobs:
       - name: Build release cdylib
         run: cargo build --release --target ${{ matrix.target }}
         working-directory: native
+      - uses: actions/setup-python@v7
+        if: matrix.native_runner
+        with:
+          python-version: "3.12"
+      - name: Run the sidecar's self-test
+        # Loads the actual built library the way engine/native.py does and
+        # runs its known-answer self-test, on the one build per platform
+        # where this runner can execute what it just compiled (not the
+        # cross-compiled x86_64-apple-darwin). cargo build only proves the
+        # code compiles for a target; this is what actually proves a given
+        # platform's binary computes the right answers, closing the gap a
+        # miscompilation or a wrong byte-order/word-size assumption would
+        # otherwise only be caught by -- silently, as a fallback to pure
+        # Python -- on an examiner's own machine.
+        if: matrix.native_runner
+        shell: bash
+        working-directory: native
+        run: |
+          python - <<'PY'
+          import ctypes, glob, sys
+          paths = (glob.glob("target/${{ matrix.target }}/release/*.so")
+                  + glob.glob("target/${{ matrix.target }}/release/*.dylib")
+                  + glob.glob("target/${{ matrix.target }}/release/*.dll"))
+          assert len(paths) == 1, paths
+          lib = ctypes.CDLL(paths[0])
+          lib.strata_selftest.restype = ctypes.c_int32
+          rc = lib.strata_selftest()
+          print("strata_selftest() ->", rc)
+          sys.exit(0 if rc == 0 else 1)
+          PY
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

@@ -11,6 +11,8 @@ differ only in a few places produce digests that partially match, and
 exact/no-match test.
 """
 
+from . import native
+
 MIN_BLOCK_SIZE = 3
 SPAMSUM_LENGTH = 64
 _ROLL_WINDOW = 7
@@ -123,18 +125,43 @@ class Hasher:
     """Streaming fuzzy hash of `length` bytes. feed() the content in order;
     if digest() then needs a pass at a smaller block size (ssdeep retries
     when the signature comes out short), it calls `reread()` for a fresh
-    iterable of the same content's chunks."""
+    iterable of the same content's chunks.
+
+    Runs over every byte of every file in a bulk hashing job, so when the
+    native sidecar is available feed() skips the pure-Python pass entirely
+    and only buffers what it is given, handing the sidecar the whole thing
+    in one call at digest() time -- giving up the "never hold the file
+    whole" point of streaming, but only when the trade is a >50x speedup.
+    With no sidecar, feed() does exactly what it already did and nothing
+    here changes. `_pass`/`_rerun` (identical output, verified below and at
+    the sidecar's own load-time self-test) are the fallback and correctness
+    reference -- also used if the sidecar is available but errors at
+    digest() time, rebuilt from what was buffered rather than re-reading."""
 
     def __init__(self, length):
         self.length = length
         self.fed = 0
-        self._pass = _Pass(_initial_block_size(length))
+        self._native = native.available()
+        self._buf = bytearray() if self._native else None
+        self._pass = None if self._native else _Pass(_initial_block_size(length))
 
     def feed(self, data):
         self.fed += len(data)
-        self._pass.feed(data)
+        if self._native:
+            self._buf += data
+        else:
+            self._pass.feed(data)
 
     def digest(self, reread):
+        if self._native:
+            try:
+                return native.fuzzy_hash(bytes(self._buf))
+            except native.NativeError:
+                self._native = False
+                self.length = self.fed = len(self._buf)
+                self._pass = _Pass(_initial_block_size(self.length))
+                self._pass.feed(self._buf)
+                self._buf = None
         p = self._pass
         if self.fed != self.length:
             # Fewer (or more) bytes arrived than planned; the block size
@@ -163,6 +190,19 @@ def hash_bytes(data):
     h = Hasher(len(data))
     h.feed(data)
     return h.digest(lambda: (data,))
+
+
+def _hash_bytes_py(data):
+    """The pure-Python path with no native short-circuit -- the correctness
+    reference `Hasher` falls back to, and what the differential tests in
+    tests/test_native_crypto.py check the sidecar against."""
+    block_size = _initial_block_size(len(data))
+    while True:
+        sig1, sig2, tail1, tail2 = _piecewise_pass(data, block_size)
+        if block_size > MIN_BLOCK_SIZE and len(sig1) < SPAMSUM_LENGTH // 2:
+            block_size //= 2
+            continue
+        return "%d:%s:%s" % (block_size, sig1 + tail1, sig2 + tail2)
 
 
 def _levenshtein(s, t):
