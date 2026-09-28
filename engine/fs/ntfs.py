@@ -115,7 +115,7 @@ def decode_runlist(data, cluster_count=None, findings=None):
 class Attribute:
     def __init__(self, type_id, name, resident, header, body, runs=None,
                  alloc_size=0, real_size=0, flags=0, start_vcn=0,
-                 compression_unit=0):
+                 compression_unit=0, init_size=None):
         self.type_id = type_id
         self.name = name
         self.resident = resident
@@ -126,6 +126,16 @@ class Attribute:
         self.flags = flags
         self.start_vcn = start_vcn
         self.compression_unit = compression_unit
+        self._init_size = init_size
+
+    @property
+    def init_size(self):
+        """Valid data length: bytes from here to real_size were never
+        written, and read as zeros whatever the clusters hold. Only the
+        first extent declares one; without it the whole file is valid."""
+        if self._init_size is None:
+            return self.real_size
+        return max(0, min(self._init_size, self.real_size))
 
     @property
     def type_name(self):
@@ -199,12 +209,16 @@ class MftRecord:
                 run_off = struct.unpack("<H", buf[off + 32:off + 34])[0]
                 comp_unit = struct.unpack("<H", buf[off + 34:off + 36])[0]
                 alloc_size, real_size = struct.unpack("<QQ", buf[off + 40:off + 56])
+                init_size = (struct.unpack("<Q", buf[off + 56:off + 64])[0]
+                             if length >= 64 else None)
                 runs = decode_runlist(buf[off + run_off: off + length],
                                       getattr(self.fs, "cluster_count", 0),
                                       getattr(self.fs, "findings", None))
+                # Sizes are meaningful only in an attribute's first extent.
                 a = Attribute(type_id, name, False, None, None, runs,
                               alloc_size, real_size, attr_flags, start_vcn,
-                              comp_unit)
+                              comp_unit,
+                              init_size if start_vcn == 0 else None)
             else:
                 content_len = struct.unpack("<I", buf[off + 16:off + 20])[0]
                 content_off = struct.unpack("<H", buf[off + 20:off + 22])[0]
@@ -294,7 +308,7 @@ class MftRecord:
                     first.type_id, first.name, first.resident, None,
                     first.body, list(first.runs), first.alloc_size,
                     first.real_size, first.flags, first.start_vcn,
-                    first.compression_unit)
+                    first.compression_unit, first._init_size)
                 for extra in pieces[1:]:
                     merged.runs.extend(extra.runs)
                     merged.real_size = max(merged.real_size, extra.real_size)
@@ -547,7 +561,21 @@ class NtfsFS:
                 continue
             yield start, lcn * self.cluster_size, min(span, end - start)
 
+    @staticmethod
+    def _past_valid_data(attr, offset, data):
+        """data (read from `offset`) with every byte at or past the valid
+        data length replaced by zeros, as Windows returns them."""
+        cut = attr.init_size - offset
+        if attr.resident or cut >= len(data):
+            return data
+        cut = max(0, cut)
+        return data[:cut] + bytes(len(data) - cut)
+
     def read_attr_range(self, attr, offset, length):
+        return self._past_valid_data(
+            attr, offset, self._read_attr_range(attr, offset, length))
+
+    def _read_attr_range(self, attr, offset, length):
         if attr.resident:
             return attr.body[offset:offset + length]
         if attr.compressed:
@@ -573,6 +601,10 @@ class NtfsFS:
         return bytes(out)
 
     def read_attr(self, attr, max_bytes=None):
+        return self._past_valid_data(attr, 0,
+                                     self._read_attr(attr, max_bytes))
+
+    def _read_attr(self, attr, max_bytes=None):
         if attr.resident:
             return attr.body if max_bytes is None else attr.body[:max_bytes]
         if attr.compressed:
@@ -763,6 +795,17 @@ class NtfsFS:
             if a.name == want and a.encrypted:
                 info["note"] = ("Attribute is EFS encrypted. The runs point at "
                                 "ciphertext; this build does not decrypt.")
+        for a in rec.data_attrs():
+            if a.name == want and not a.resident and \
+                    a.init_size < a.real_size:
+                info["valid_data_length"] = a.init_size
+                info["note"] = ((info["note"] + " ") if info.get("note")
+                                else "") + (
+                    "Valid data length (%d) is shorter than the file size "
+                    "(%d). Bytes after it were never written by this file and "
+                    "read as zeros, as Windows returns them; the clusters "
+                    "there still hold whatever was on disk before, which the "
+                    "runs below point at." % (a.init_size, a.real_size))
         if entry.get("deleted"):
             info["recovery"] = ("Record marked not-in-use. Runlist is intact "
                                 "but clusters may have been reallocated; "

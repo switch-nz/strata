@@ -13,6 +13,16 @@ records, not how the code changed.
 
 ### Fixed
 
+- **NTFS and exFAT files returned stale disk content past their valid data
+  length.** A file's valid data length marks where the data it actually
+  wrote ends; Windows reads everything after it as zeros. Strata returned
+  whatever the clusters held there, usually part of an earlier file, as this
+  file's content, so previews, searches, exports and hashes differed from
+  Windows and other tools. Those bytes now read as zeros. The file's details
+  give the valid data length, and the runs still lead to the stale bytes in
+  the hex view. **Hashes of such files change:** hashes stored in a case
+  before this version keep their old values until the files are hashed again.
+
 - **"Hash every file" left out files it could not read, and said nothing.**
   A file whose content could not be read was dropped from the results, and
   the count of hashed files gave no sign of it. Such files are now listed

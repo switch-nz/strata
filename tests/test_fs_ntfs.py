@@ -374,6 +374,42 @@ class NtfsRobustness(unittest.TestCase):
         self.assertEqual(rec.attrs, [])
         self.assertEqual(fs.read_file({"mft": REC["hello"]}), b"")
 
+    def with_valid_data_length(self, vdl):
+        data = bytearray(self.good)
+        base = self.record_offset(REC["big"])
+        runs = self.good.index(b"\x11\x02\x28", base, base + build.RECORD)
+        attr = runs - 64                     # unnamed, uncompressed header
+        self.assertEqual(struct.unpack_from("<Q", data, attr + 48)[0],
+                         build.BIG_SIZE)     # real size, so attr is right
+        struct.pack_into("<Q", data, attr + 56, vdl)
+        return ntfs.NtfsFS(BytesImage(data))
+
+    def test_bytes_past_valid_data_length_read_as_zeros(self):
+        fs = self.with_valid_data_length(1000)
+        want = build.big_content()[:1000] + bytes(build.BIG_SIZE - 1000)
+        entry = {"mft": REC["big"]}
+        self.assertEqual(fs.read_file(entry), want)
+        self.assertEqual(fs.read_range(entry, 900, 3000), want[900:3900])
+        self.assertEqual(fs.read_range(entry, 2000, 50), bytes(50))
+        info = fs.stat(entry)
+        self.assertEqual(info["valid_data_length"], 1000)
+        self.assertIn("read as zeros", info["note"])
+        # The stale bytes themselves are still where the runs say.
+        first = info["runs"][0]
+        self.assertEqual(fs.source.read_at(first["offset"] + 1000, 16),
+                         build.big_content()[1000:1016])
+
+    def test_zero_valid_data_length_reads_all_zeros(self):
+        fs = self.with_valid_data_length(0)
+        self.assertEqual(fs.read_file({"mft": REC["big"]}),
+                         bytes(build.BIG_SIZE))
+
+    def test_valid_data_length_past_the_file_size_changes_nothing(self):
+        fs = self.with_valid_data_length(build.BIG_SIZE * 4)
+        self.assertEqual(fs.read_file({"mft": REC["big"]}),
+                         build.big_content())
+        self.assertNotIn("valid_data_length", fs.stat({"mft": REC["big"]}))
+
     def test_run_longer_than_volume(self):
         data = bytearray(self.good)
         base = self.record_offset(REC["big"])
