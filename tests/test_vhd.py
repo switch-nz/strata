@@ -203,7 +203,7 @@ class DifferencingVhd(VhdCase):
         self.assertEqual(info["segments"], ["child.vhd", "base.vhd"])
         self.assertEqual(info["acquisition"]["parent"], self.parent_path)
         self.assertEqual(info["acquisition"]["parent found by"],
-                         "parent name in the header, beside this file")
+                         "parent name in the disk's header, beside this file")
 
     def test_parent_found_through_a_relative_locator(self):
         img = self.child(parent_name="",
@@ -211,7 +211,24 @@ class DifferencingVhd(VhdCase):
                              "utf-16-le"))])
         self.assertEqual(img.read_at(0, DISK), self.want)
         self.assertEqual(img.info()["acquisition"]["parent found by"],
-                         "relative locator")
+                         "file name in the disk's parent locator, beside "
+                         "this file")
+
+    def test_locators_never_lead_outside_this_folder(self):
+        # A parent that exists, but elsewhere: a crafted locator must not
+        # make the reader open it, whether by a relative climb or an
+        # absolute path.
+        outside = os.path.join(self._tmp.name, "elsewhere")
+        os.mkdir(outside)
+        os.rename(self.parent_path, os.path.join(outside, "base.vhd"))
+        for code, text in ((b"W2ru", "..\\elsewhere\\base.vhd"),
+                           (b"W2ku", os.path.join(outside, "base.vhd")),
+                           (b"MacX", "file://" + outside + "/base.vhd")):
+            with self.subTest(code=code):
+                enc = "utf-16-le" if code.startswith(b"W2") else "utf-8"
+                with self.assertRaises(ewf.UnsupportedContainer):
+                    self.child(parent_name="../elsewhere/base.vhd",
+                               locators=[(code, text.encode(enc))])
 
     def test_absolute_locator_from_another_machine_falls_back_to_the_name(self):
         img = self.child(parent_name="", locators=[

@@ -37,10 +37,11 @@ records, not how the code changed.
   before; dynamic and differencing ones were refused. A dynamic disk is read
   through its block allocation table, with blocks never written reading as
   zeros. A differencing disk reads each sector from itself or from its
-  parent, as the disk's own sector bitmaps say. The parent is found from the
-  paths recorded in the disk, or by name in the same folder, and the disk is
-  refused if the parent is missing or is not the exact disk it was made
-  from. The exhibit's details name the parent and how it was found, and list
+  parent, as the disk's own sector bitmaps say. The parent must be in the
+  same folder, under the file name the disk records; a path recorded in the
+  disk is never followed anywhere else, so a crafted disk cannot make
+  Strata open other files. The disk is refused if the parent is missing or
+  is not the exact disk it was made from. The exhibit's details name the parent and how it was found, and list
   both files.
 
 ### Fixed

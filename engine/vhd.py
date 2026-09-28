@@ -134,7 +134,8 @@ class VhdImage:
         self.parent_how = None
         self._chain = (_chain or ()) + (os.path.realpath(path),)
 
-        file_size = self._file_size = os.path.getsize(path)
+        file_size = os.path.getsize(path)
+        self._file_size = file_size
         if file_size < FOOTER_SIZE:
             raise VhdError(_t("vhd.footer_short"))
 
@@ -208,8 +209,13 @@ class VhdImage:
             self._open_parent(hdr)
 
     def _parent_candidates(self, hdr):
-        here = os.path.dirname(os.path.abspath(self.path))
-        seen = []
+        """Where the parent may be, as (how it was found, path) pairs. The
+        locators are written by whoever made the image, so only the file
+        name they give is used, and only in this disk's own folder: a
+        crafted disk must not lead the reader anywhere else on the
+        examiner's machine."""
+        here = os.path.dirname(os.path.realpath(self.path))
+        names = []
         for code, length, offset in hdr["locators"]:
             data = self._file_read(offset, min(length, 4096))
             if code in (b"W2ru", b"W2ku"):
@@ -218,27 +224,21 @@ class VhdImage:
                 text = data.decode("latin-1")
             elif code == b"MacX":
                 text = data.decode("utf-8", "replace")
-                if text.startswith("file://"):
-                    text = text[7:]
             else:
                 continue
             text = text.split("\x00")[0].strip()
-            if not text:
+            names.append(("file name in the disk's parent locator",
+                          text.replace("\\", "/").split("/")[-1]))
+        names.append(("parent name in the disk's header",
+                      hdr["parent_name"].replace("\\", "/").split("/")[-1]))
+        seen = []
+        for how, name in names:
+            if not name or name in (".", "..") or "\x00" in name:
                 continue
-            local = text.replace("\\", os.sep)
-            if code in (b"W2ru", b"Wi2r"):
-                seen.append(("relative locator",
-                             os.path.normpath(os.path.join(here, local))))
-            else:
-                seen.append(("absolute locator", local))
-            # A disk and its parent are usually copied into one folder, so
-            # whatever path the locator gives, try its name beside the child.
-            base = local.replace("/", os.sep).split(os.sep)[-1]
-            seen.append(("locator's file name, beside this file",
-                         os.path.join(here, base)))
-        if hdr["parent_name"]:
-            seen.append(("parent name in the header, beside this file",
-                         os.path.join(here, hdr["parent_name"])))
+            candidate = os.path.normpath(os.path.join(here, name))
+            if not candidate.startswith(os.path.join(here, "")):
+                continue
+            seen.append((how + ", beside this file", candidate))
         return seen
 
     def _open_parent(self, hdr):
