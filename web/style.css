@@ -586,6 +586,11 @@ select:focus, input:focus, textarea:focus { border-color: var(--dim); }
 }
 .result .flag.warn { color: var(--amber); border-color: var(--amber-dim); }
 
+.result .dim { color: var(--dimmer); }
+.events-controls { display: flex; flex-direction: row; flex-wrap: wrap;
+                   gap: 8px; align-items: center; padding: 6px 12px; }
+.events-controls .dv-filter { flex: 1 1 220px; min-width: 0; height: auto; }
+.events-controls select { flex: 0 1 auto; }
 .result.note { cursor: default; }
 .result.note.is-withdrawn { opacity: 0.6; }
 .result.note .note-body { white-space: pre-wrap; overflow-wrap: anywhere;

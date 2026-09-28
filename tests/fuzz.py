@@ -181,6 +181,23 @@ def run_vmdk(data):
     run_ewf(data, name="disk.vmdk")
 
 
+def run_evtx(data):
+    from engine import evtx
+    evtx.parse(data)
+    evtx.count_records(data)
+
+
+def _evtx_seed():
+    import imagebuild_evtx as b
+    sec = "Microsoft-Windows-Security-Auditing"
+    return b.build_log([
+        b.event(4624, sec, "2024-03-01T10:00:00.000Z",
+                data={"LogonType": 3, "TargetUserName": "bob"}),
+        b.event(7045, "Service Control Manager", "2024-03-01T10:02:00.000Z",
+                channel="System", data={"ServiceName": "svc"}),
+    ])
+
+
 def run_vhd(data):
     run_ewf(data, name="disk.vhd")
 
@@ -310,6 +327,7 @@ def targets():
                        run_pst)
     out["ewf"] = (lambda: imagebuild_ewf.build_e01()[0], run_ewf)
     out["vmdk-sparse"] = (imagebuild_vmdk.build_sparse, run_vmdk)
+    out["evtx"] = (_evtx_seed, run_evtx)
     import imagebuild_vhd
     out["vhd-dynamic"] = (lambda: imagebuild_vhd.sparse(
         5 * 4096, _vhd_blocks())[0], run_vhd)

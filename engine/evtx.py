@@ -2,6 +2,8 @@ import datetime
 import struct
 import uuid
 
+from . import eventids
+
 FILE_MAGIC = b"ElfFile\x00"
 CHUNK_MAGIC = b"ElfChnk\x00"
 RECORD_MAGIC = b"\x2a\x2a\x00\x00"
@@ -389,6 +391,8 @@ def _summarise(flat):
         return None
 
     level = pick("System/Level")
+    if isinstance(level, str) and level.strip().isdigit():
+        level = int(level)
     return {
         "event_id": pick("System/EventID"),
         "level": LEVELS.get(level, level) if isinstance(level, int) else level,
@@ -491,6 +495,8 @@ def parse(data, max_records=None, progress=None, offset=0):
             else:
                 flat = _flatten(el)
                 rec.update(_summarise(flat))
+                rec["description"] = eventids.describe(
+                    rec.get("provider"), rec.get("event_id"), flat)
                 rec["fields"] = flat
                 if el.get("_unsupported"):
                     rec["unsupported"] = ", ".join(el["_unsupported"])
@@ -510,3 +516,60 @@ def parse(data, max_records=None, progress=None, offset=0):
     if progress:
         progress(1.0)
     return out
+
+
+SWEEP_MAX_EVENTS = 100000
+LOG_READ_MAX = 256 << 20
+
+def sweep(logs, progress=None, max_events=SWEEP_MAX_EVENTS):
+    """Every record in several event logs from one volume, merged into one
+    timeline. `logs` is [(name, source path, read())]; read() returns the
+    file's bytes. Returns per-log summaries and the events, oldest first;
+    past max_events only the newest are kept, and the result says so."""
+    summaries, events = [], []
+    total = max(1, len(logs))
+    for i, (name, source, read) in enumerate(logs):
+        if progress:
+            progress(i / total)
+        row = {"name": name, "source": source, "records": 0}
+        summaries.append(row)
+        try:
+            r = parse(read())
+        except Exception as exc:
+            row["error"] = str(exc) or type(exc).__name__
+            continue
+        if r is None:
+            row["error"] = "not an event log (no ElfFile header)"
+            continue
+        recs = r["records"]
+        row["records"] = len(recs)
+        row["findings"] = r.get("findings") or []
+        row["dirty"] = bool((r.get("header") or {}).get("dirty"))
+        times = []
+        for x in recs:
+            when = x.get("created") or x.get("written_at")
+            if when:
+                times.append(when)
+            if not row.get("channel") and x.get("channel"):
+                row["channel"] = x["channel"]
+            events.append({
+                "time": when, "log": len(summaries) - 1,
+                "record_id": x.get("record_id"),
+                "event_id": x.get("event_id"), "provider": x.get("provider"),
+                "level": x.get("level"), "channel": x.get("channel"),
+                "computer": x.get("computer"),
+                "description": x.get("description"),
+                "undecoded": bool(x.get("unsupported")),
+            })
+        if times:
+            row["first"], row["last"] = min(times), max(times)
+    if progress:
+        progress(1.0)
+    events.sort(key=lambda e: (e["time"] or "", e["log"],
+                               e["record_id"] or 0))
+    found = len(events)
+    if found > max_events:
+        events = events[-max_events:]
+    return {"logs": summaries, "events": events, "total_events": found,
+            "truncated": found > max_events,
+            "note": eventids.NOTE}

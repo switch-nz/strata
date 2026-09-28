@@ -98,7 +98,12 @@ recognised and refused by name today; these entries are about *reading* it.
       service worker script cache. Not yet checked on real data: Firefox
       cache2 (synthetic only), and doomed, evicted or freed-block blockfile
       entries (synthetic tests only, no real cache that had entries evicted).
-- [ ] **Event ID descriptions**, and timelining across logs.
+- [~] **Event ID descriptions**, and timelining across logs — a bundled
+      table describes well-known IDs by provider (Strata's own summaries,
+      not the providers' message text, which is not read), and every
+      `.evtx` on a volume merges into one timeline in Triage → Events.
+      Rendering the providers' own messages from their manifests is still
+      open, and neither has been checked against logs from real machines.
 - [~] **PST:** ANSI (32-bit) files are read, from the layouts in [MS-PST]
       and synthetic files built from them; no real ANSI file has been
       checked yet. OST-specific structures are not handled.

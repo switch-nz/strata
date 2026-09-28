@@ -2862,7 +2862,30 @@ class Handler(BaseHTTPRequestHandler):
             fs = s.fs(part)
             entry = body.get("entry")
             if not entry:
-                return self._send(400, {"error": _t("server.evtx.pick_evtx_file")})
+                # No file named: every event log on the volume, as one
+                # timeline across logs.
+                root = _root_node(fs)
+
+                def sweep(progress):
+                    found = [e for e in filesearch_mod.collect(fs, root)
+                             if not e.get("is_dir") and (e.get("size") or 0)
+                             and (e.get("name") or "").lower()
+                             .endswith(".evtx")]
+                    found.sort(key=lambda e: (e.get("path") or "").lower())
+                    logs = [(e.get("name"), e.get("path"),
+                             (lambda e=e: fs.read_file(
+                                 e, evtx_mod.LOG_READ_MAX)))
+                            for e in found]
+                    r = evtx_mod.sweep(logs, progress=progress)
+                    for row, e in zip(r["logs"], found):
+                        row["entry"] = e
+                    return r
+
+                return self._send(200, s.start_task(
+                    "evtx", sweep, label="Reading event logs",
+                    detail="Every .evtx file on the volume, merged into one "
+                           "timeline across logs.",
+                    keep=("evtx", part)))
             limit = int(body.get("limit") or 2000)
             offset = int(body.get("offset") or 0)
 

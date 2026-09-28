@@ -207,7 +207,6 @@
   "server.evidence_open": "No evidence is open.",
   "server.evidence_select.such_evidence_item": "No such evidence item.",
   "server.evtx.event_log": "Not an event log.",
-  "server.evtx.pick_evtx_file": "Pick a .evtx file.",
   "server.export.case_open": "No case is open.",
   "server.export.everything_here_either_free": "Everything here is either free to compute or already done. Nothing on this screen starts a scan by itself, and anything that has not been looked for says so.",
   "server.export_folder.folder": "That is not a folder.",

@@ -3859,6 +3859,7 @@ async function openEventLog(entry, part, offset = 0) {
       <td class="sz">${x.event_id ?? '—'}</td>
       <td class="nm">${esc(x.level || '')}</td>
       <td class="nm">${esc(x.provider || '')}</td>
+      <td class="nm">${esc(x.description || '')}</td>
     </tr>`).join('');
 
   const total = r.total ?? recs.length;
@@ -3881,7 +3882,8 @@ async function openEventLog(entry, part, offset = 0) {
       <div class="dv-body">
         <table class="dv-list evtx">
           <thead><tr><th>${txt('ui.open_event_log.written')}</th><th>${txt('ui.open_event_log.event')}</th><th>${txt('ui.open_event_log.level')}</th>
-            <th>${txt('ui.open_event_log.provider')}</th></tr></thead>
+            <th>${txt('ui.open_event_log.provider')}</th>
+            <th title="${esc(txt('help.events.descriptions'))}">${txt('ui.open_event_log.description')}</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -3906,6 +3908,7 @@ async function openEventLog(entry, part, offset = 0) {
         <div class="reg-meta">Record ${x.record_id} · ${
           esc(fmt.time(x.written_at))}${x.computer
             ? ' · ' + esc(x.computer) : ''}</div>
+        ${x.description ? `<div class="reg-meta">${esc(x.description)}</div>` : ''}
         ${x.unsupported ? `<div class="notice">${esc(x.unsupported)}</div>` : ''}
         <table class="reg-vals"><tbody>${Object.entries(f).map(([k, v]) => `
           <tr><td class="nm">${esc(k.replace(/^Event\//, ''))}</td>
@@ -5934,17 +5937,19 @@ const artKey = (mode, part) => `${mode}:${part}`;
 const ART_RENDER = {
   vss: renderVss, browser: renderBrowser, appcompat: renderAppcompat,
   prefetch: renderPrefetch, shellbags: renderShellbags, mail: renderMail,
+  evtx: renderEvents,
   leveldb: renderLevelDbSweep, lnk: renderLnk, recyclebin: renderRecycleBin,
   wallets: renderWallets,
   snapshots: renderSnapshots,
 };
 
 const ART_ORDER = ['recyclebin', 'lnk', 'browser', 'appcompat', 'prefetch',
-                   'usn', 'shellbags', 'mail', 'leveldb', 'vss', 'snapshots',
+                   'evtx', 'usn', 'shellbags', 'mail', 'leveldb', 'vss', 'snapshots',
                    'wallets'];
 const ART_LABEL = {
   recyclebin: 'Recycle Bin', lnk: 'Shortcuts', browser: 'Browsing',
-  appcompat: 'Programs', prefetch: 'Execution', usn: txt('ui.change_journal'),
+  appcompat: 'Programs', prefetch: 'Execution', evtx: txt('ui.tree.events'),
+  usn: txt('ui.change_journal'),
   shellbags: 'Folders', mail: 'Mail', leveldb: 'LevelDB',
   vss: txt('ui.tree.shadow_copies'), snapshots: txt('ui.tree.apfs_snapshots'),
   wallets: 'Crypto',
@@ -5966,7 +5971,7 @@ function artCount(mode, r) {
     return (r.items || []).length + (r.jumplists || []).reduce(
       (n, l) => n + (l.entries || []).length, 0);
   }
-  for (const k of ['items', 'entries', 'rows', 'hits', 'programs', 'bags',
+  for (const k of ['items', 'events', 'entries', 'rows', 'hits', 'programs', 'bags',
                    'messages', 'stores', 'copies', 'files']) {
     if (Array.isArray(r[k])) return r[k].length;
   }
@@ -6246,6 +6251,14 @@ async function doArtifacts(force = false) {
                detail: txt('help.ran_how_often_files_each_program_opened') },
     });
     return r ? renderPrefetch(cacheArtefact('prefetch', part, r), part) : null;
+  }
+  if (artMode === 'evtx') {
+    const t = await api.post('evtx', { part });
+    const r = await awaitTask(t, txt('ui.tree.events'), {
+      modal: { title: txt('ui.tree.events'),
+               detail: txt('help.events.sweep') },
+    });
+    return r ? renderEvents(cacheArtefact('evtx', part, r), part) : null;
   }
   if (artMode === 'wallets') {
     const t = await api.post('wallets', { part });
@@ -6931,6 +6944,83 @@ function renderPrefetch(r, part) {
     if (p.entry) openHit({ ...p.entry, entry: p.entry }, part);
   });
   tabCount('triage', items.length);
+}
+
+const EVENTS_SHOWN = 1500;
+
+function renderEvents(r, part) {
+  const box = $('#art-results');
+  const logs = r.logs || [];
+  const events = r.events || [];
+  const notes = [
+    r.note,
+    r.truncated ? txt('ui.events.truncated', {
+      total: fmt.count(r.total_events), kept: fmt.count(events.length) }) : null,
+    ...logs.filter(l => l.error).map(l => txt('ui.events.log_error',
+      { name: l.source || l.name, error: l.error })),
+    ...logs.flatMap(l => (l.findings || []).map(f => `${l.name}: ${f}`)),
+  ].filter(Boolean).map(n => `<div class="notice">${esc(n)}</div>`).join('');
+  if (!events.length) {
+    box.innerHTML = notes + `<p class="empty">${txt('ui.events.none')}</p>`;
+    tabCount('triage', 0);
+    return;
+  }
+  const withRecords = logs.map((l, i) => ({ ...l, i }))
+    .filter(l => l.records);
+  box.innerHTML = notes + `
+    <div class="results-head">${esc(txt('ui.events.summary', {
+      events: fmt.count(events.length), logs: withRecords.length }))}</div>
+    <div class="events-controls">
+      <input type="text" id="ev-q" class="dv-filter"
+             placeholder="${esc(txt('ui.events.filter'))}">
+      <select id="ev-log"><option value="">${txt('ui.events.all_logs')}</option>${
+        withRecords.map(l => `<option value="${l.i}">${esc(l.name)} (${
+          fmt.count(l.records)})</option>`).join('')}</select>
+      <label class="row"><input type="checkbox" id="ev-described">
+        <span>${txt('ui.events.described_only')}</span></label>
+    </div>
+    <div id="ev-list"></div>`;
+  const draw = () => {
+    const q = ($('#ev-q').value || '').trim().toLowerCase();
+    const log = $('#ev-log').value;
+    const described = $('#ev-described').checked;
+    const hits = [];
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i];
+      if (log !== '' && e.log !== +log) continue;
+      if (described && !e.description) continue;
+      if (q && ![e.event_id, e.provider, e.description, e.computer, e.channel]
+          .some(v => v != null && String(v).toLowerCase().includes(q))) continue;
+      hits.push(i);
+    }
+    const shown = hits.slice(0, EVENTS_SHOWN);
+    $('#ev-list').innerHTML = (hits.length > shown.length
+      ? `<p class="hint">${esc(txt('ui.events.showing', {
+          shown: fmt.count(shown.length), matched: fmt.count(hits.length) }))}</p>`
+      : '') + shown.map(i => {
+        const e = events[i];
+        const l = logs[e.log] || {};
+        return `<div class="result" data-i="${i}">
+          <div class="top"><span class="kind">${esc(e.event_id ?? '—')}${
+            e.level ? ' · ' + esc(e.level) : ''}</span>
+            <span class="off">${esc(fmt.time(e.time))}</span></div>
+          <div class="name">${e.description ? esc(e.description)
+            : `<span class="dim">${txt('ui.events.no_description')}</span>`}</div>
+          <div class="path">${esc(e.provider || '')} · ${esc(l.name || '')}${
+            e.computer ? ' · ' + esc(e.computer) : ''}</div>
+        </div>`;
+      }).join('');
+    bindResults($('#ev-list'), el => {
+      const e = events[+el.dataset.i];
+      const l = logs[e.log];
+      if (l && l.entry) openHit({ ...l.entry, entry: l.entry }, part);
+    });
+  };
+  $('#ev-q').addEventListener('input', draw);
+  $('#ev-log').addEventListener('change', draw);
+  $('#ev-described').addEventListener('change', draw);
+  draw();
+  tabCount('triage', events.length);
 }
 
 function renderShellbags(r, part) {
