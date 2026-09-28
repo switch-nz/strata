@@ -11,6 +11,18 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+### Added
+
+- **Dynamic and differencing VHD disks are read.** Only fixed VHDs opened
+  before; dynamic and differencing ones were refused. A dynamic disk is read
+  through its block allocation table, with blocks never written reading as
+  zeros. A differencing disk reads each sector from itself or from its
+  parent, as the disk's own sector bitmaps say. The parent is found from the
+  paths recorded in the disk, or by name in the same folder, and the disk is
+  refused if the parent is missing or is not the exact disk it was made
+  from. The exhibit's details name the parent and how it was found, and list
+  both files.
+
 ### Fixed
 
 - **Entries removed from the end of the audit log went unnoticed.** Deleting

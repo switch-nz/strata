@@ -39,9 +39,13 @@ recognised and refused by name today; these entries are about *reading* it.
       Verified against genuine `split` and `dd` output; FTK Imager and
       Guymager naming was reconstructed from their documentation and source,
       so sets written by those tools themselves still need checking.
-- [ ] **VHD** (the older `conectix` format, not VHDX) — a fixed VHD is raw
-      with a footer appended and nearly free; dynamic and differencing disks
-      need their own block allocation table.
+- [~] **VHD** (the older `conectix` format, not VHDX) — fixed, dynamic and
+      differencing disks are read. A differencing disk reads through its
+      parent, found from the header's parent locators or by name beside it,
+      and is refused if the parent's identifier is not the one it was made
+      from. Verified only against synthetic images built from the published
+      specification; disks written by Virtual PC, Hyper-V and Disk2vhd still
+      need checking.
 - [ ] **QCOW2**, **VDI**, **DMG**, **AFF / AFF4** — AFF4 is ZIP-based and is
       deliberately not matched by signature, since refusing every ordinary
       archive to catch one image format would be wrong far more often than
