@@ -117,5 +117,72 @@ class HashEntry(unittest.TestCase):
         self.assertIsNone(row["fuzzy"])
 
 
+
+class RangedFs(FakeFs):
+    """A filesystem read a piece at a time, recording the largest read."""
+
+    def __init__(self, data, broken=()):
+        super().__init__(data)
+        self.largest = 0
+        self.broken = set(broken)
+
+    def read_range(self, entry, off, length):
+        if entry.get("name") in self.broken:
+            raise OSError("run list points outside the volume")
+        self.largest = max(self.largest, length)
+        return self._data[off:off + length]
+
+
+class StreamedHashing(unittest.TestCase):
+
+    def setUp(self):
+        self._chunk = hashing.CHUNK
+        hashing.CHUNK = 1000                 # many pieces from a small file
+
+    def tearDown(self):
+        hashing.CHUNK = self._chunk
+
+    def test_streamed_digests_equal_whole_file_digests(self):
+        import hashlib
+        import random
+        rng = random.Random(4)
+        for n in (1, 999, 1000, 1001, 25000, 70001):
+            data = bytes(rng.getrandbits(8) for _ in range(n))
+            fs = RangedFs(data)
+            row = hashing.hash_entry(fs, {"mft": 5, "size": n})
+            with self.subTest(n=n):
+                self.assertEqual(row["md5"], hashlib.md5(data).hexdigest())
+                self.assertEqual(row["sha256"],
+                                 hashlib.sha256(data).hexdigest())
+                self.assertEqual(row["fuzzy"], fuzzyhash.hash_bytes(data))
+                self.assertEqual(row["read"], n)
+                self.assertLessEqual(fs.largest, 1000)
+
+    def test_fuzzy_block_size_retry_rereads_the_file(self):
+        # Repetitive content gives a short signature at the first block
+        # size, so ssdeep retries at a smaller one.
+        data = b"abcdefgh" * 20000
+        row = hashing.hash_entry(RangedFs(data), {"mft": 5, "size": len(data)})
+        self.assertEqual(row["fuzzy"], fuzzyhash.hash_bytes(data))
+
+    def test_short_read_is_fuzzy_hashed_by_what_was_read(self):
+        data = bytes(range(256)) * 40
+        row = hashing.hash_entry(RangedFs(data),
+                                 {"mft": 5, "size": len(data) * 3})
+        self.assertTrue(row["partial"])
+        self.assertEqual(row["fuzzy"], fuzzyhash.hash_bytes(data))
+
+    def test_a_file_that_cannot_be_read_is_reported_not_dropped(self):
+        fs = RangedFs(b"content", broken={"bad.bin"})
+        failed = []
+        rows = hashing.hash_many(fs, [
+            {"mft": 5, "name": "good.txt", "path": "/good.txt", "size": 7},
+            {"mft": 6, "name": "bad.bin", "path": "/bad.bin", "size": 7}],
+            failures=failed)
+        self.assertEqual([r["name"] for r in rows], ["good.txt"])
+        self.assertEqual(failed, [{
+            "node": "6", "name": "bad.bin", "path": "/bad.bin", "size": 7,
+            "error": "run list points outside the volume"}])
+
 if __name__ == "__main__":
     unittest.main()

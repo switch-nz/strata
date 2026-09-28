@@ -5770,11 +5770,27 @@ async function hashScope(part, scope, entry, label) {
   }
 }
 
+function hashFailures(r) {
+  const failed = r.failures || [];
+  if (!r.failed) return '';
+  return `<div class="results-head">${esc(txt('ui.hash.failed', {
+      n: r.failed.toLocaleString() }))}</div>` +
+    failed.map(f => `
+      <div class="result hash-failed">
+        <div class="top"><span class="kind">not hashed</span>
+          <span class="off">${fmt.bytes(f.size)}</span></div>
+        <div class="name">${esc(f.name || '')}</div>
+        <div class="path">${esc(f.path || '')}</div>
+        <div class="sub">${esc(f.error || '')}</div>
+      </div>`).join('');
+}
+
 function renderHashes(r, part) {
   const box = $('#hash-results');
   const rows = r.rows || [];
   if (!rows.length) {
-    box.innerHTML = `<p class="empty">${txt('ui.nothing_hashed')}</p>`;
+    box.innerHTML = hashFailures(r)
+      || `<p class="empty">${txt('ui.nothing_hashed')}</p>`;
     tabCount('hash', 0);
     return;
   }
@@ -5784,10 +5800,11 @@ function renderHashes(r, part) {
     mc.known_bad ? txt('ui.known_bad_known_bad', { known_bad: mc.known_bad }) : null,
     mc.known_good ? txt('ui.known_good_known_good', { known_good: mc.known_good }) : null,
     mc.notable ? `${mc.notable} notable` : null,
+    r.failed ? txt('ui.hash.failed_short', { n: r.failed.toLocaleString() }) : null,
     r.truncated ? txt('ui.list_truncated') : null,
   ].filter(Boolean).join(' · ');
 
-  box.innerHTML = `<div class="results-head">${summary}</div>` +
+  box.innerHTML = hashFailures(r) + `<div class="results-head">${summary}</div>` +
     rows.map((h, i) => `
       <div class="result ${h.match_kind ? 'match-' + h.match_kind : ''}" data-i="${i}">
         <div class="top">

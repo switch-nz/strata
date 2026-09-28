@@ -3704,16 +3704,23 @@ class Handler(BaseHTTPRequestHandler):
             def run(progress):
                 targets = hashing_mod.collect_scope(
                     fs, root, scope, entry, body.get("filters"))
-                rows = hashing_mod.hash_many(fs, targets, progress=progress)
+                failed = []
+                rows = hashing_mod.hash_many(fs, targets, progress=progress,
+                                             failures=failed)
                 hashing_mod.annotate_matches(s.case, rows)
                 s.case.record_hashes(s.evidence_id, rows, part)
+                if failed:
+                    s.case.log("hash.failed", {"part": part,
+                                               "count": len(failed),
+                                               "files": failed[:200]})
                 counts = {}
                 for r in rows:
                     if r.get("match_kind"):
                         counts[r["match_kind"]] = counts.get(r["match_kind"], 0) + 1
                 return {"hashed": len(rows), "rows": rows[:2000],
                         "match_counts": counts,
-                        "truncated": len(rows) > 2000}
+                        "truncated": len(rows) > 2000,
+                        "failed": len(failed), "failures": failed[:200]}
 
             t = s.start_task("hash", run, label="Hashing files",
                               detail="MD5, SHA-1, SHA-256 and a fuzzy hash "

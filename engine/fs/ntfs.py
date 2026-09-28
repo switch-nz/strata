@@ -498,7 +498,12 @@ class NtfsFS:
         end = min(offset + length, attr.real_size)
         if offset < 0 or offset >= end or cu_bytes <= 0:
             return b""
-        vcns = self._expand_runs(attr.runs)
+        # Kept on the attribute: a file read a piece at a time would
+        # otherwise rebuild the whole cluster map for every piece.
+        vcns = getattr(attr, "_vcns", None)
+        if vcns is None or attr._vcns_runs != len(attr.runs):
+            vcns = attr._vcns = self._expand_runs(attr.runs)
+            attr._vcns_runs = len(attr.runs)
         out = bytearray()
         unit = offset // cu_bytes
         pos = unit * cu_bytes

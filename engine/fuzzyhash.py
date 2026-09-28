@@ -65,47 +65,104 @@ def _initial_block_size(length):
     return bs
 
 
+class _Pass:
+    """One piecewise pass at a fixed block size, fed a chunk at a time so a
+    file never has to be held whole."""
+
+    __slots__ = ("block_size", "roll", "h1", "h2", "sig1", "sig2", "last1",
+                 "last2", "rh")
+
+    def __init__(self, block_size):
+        self.block_size = block_size
+        self.roll = _RollingHash()
+        self.h1 = self.h2 = _HASH_INIT
+        self.sig1, self.sig2 = [], []
+        self.last1 = self.last2 = ""
+        self.rh = 0
+
+    def feed(self, data):
+        roll, block_size = self.roll, self.block_size
+        h1, h2, sig1, sig2 = self.h1, self.h2, self.sig1, self.sig2
+        last1, last2, rh = self.last1, self.last2, self.rh
+        for b in data:
+            h1 = _block_hash_next(h1, b)
+            h2 = _block_hash_next(h2, b)
+            rh = roll.update(b)
+            if rh % block_size == block_size - 1:
+                last1 = _B64[h1]
+                if len(sig1) < SPAMSUM_LENGTH - 1:
+                    sig1.append(_B64[h1])
+                    h1 = _HASH_INIT
+                    last1 = ""
+                if rh % (block_size * 2) == block_size * 2 - 1:
+                    last2 = _B64[h2]
+                    if len(sig2) < SPAMSUM_LENGTH // 2 - 1:
+                        sig2.append(_B64[h2])
+                        h2 = _HASH_INIT
+                        last2 = ""
+        self.h1, self.h2, self.last1, self.last2, self.rh = \
+            h1, h2, last1, last2, rh
+
+    def finish(self):
+        # The trailing block hash is not yet part of sig1/sig2 -- whether it
+        # gets appended is decided by the caller, since the length that
+        # decides a block-size retry is measured *before* this last
+        # character lands.
+        tail1 = _B64[self.h1] if self.rh != 0 else self.last1
+        tail2 = _B64[self.h2] if self.rh != 0 else self.last2
+        return "".join(self.sig1), "".join(self.sig2), tail1, tail2
+
+
 def _piecewise_pass(data, block_size):
-    roll = _RollingHash()
-    h1 = h2 = _HASH_INIT
-    sig1, sig2 = [], []
-    last1 = last2 = ""
-    rh = 0
-    for b in data:
-        h1 = _block_hash_next(h1, b)
-        h2 = _block_hash_next(h2, b)
-        rh = roll.update(b)
-        if rh % block_size == block_size - 1:
-            last1 = _B64[h1]
-            if len(sig1) < SPAMSUM_LENGTH - 1:
-                sig1.append(_B64[h1])
-                h1 = _HASH_INIT
-                last1 = ""
-            if rh % (block_size * 2) == block_size * 2 - 1:
-                last2 = _B64[h2]
-                if len(sig2) < SPAMSUM_LENGTH // 2 - 1:
-                    sig2.append(_B64[h2])
-                    h2 = _HASH_INIT
-                    last2 = ""
-    # The trailing block hash is not yet part of sig1/sig2 -- whether it
-    # gets appended is decided by the caller, since the length that decides
-    # a block-size retry is measured *before* this last character lands.
-    tail1 = _B64[h1] if rh != 0 else last1
-    tail2 = _B64[h2] if rh != 0 else last2
-    return "".join(sig1), "".join(sig2), tail1, tail2
+    p = _Pass(block_size)
+    p.feed(data)
+    return p.finish()
+
+
+class Hasher:
+    """Streaming fuzzy hash of `length` bytes. feed() the content in order;
+    if digest() then needs a pass at a smaller block size (ssdeep retries
+    when the signature comes out short), it calls `reread()` for a fresh
+    iterable of the same content's chunks."""
+
+    def __init__(self, length):
+        self.length = length
+        self.fed = 0
+        self._pass = _Pass(_initial_block_size(length))
+
+    def feed(self, data):
+        self.fed += len(data)
+        self._pass.feed(data)
+
+    def digest(self, reread):
+        p = self._pass
+        if self.fed != self.length:
+            # Fewer (or more) bytes arrived than planned; the block size
+            # has to come from what was actually hashed.
+            p = self._rerun(_initial_block_size(self.fed), reread)
+        while True:
+            sig1, sig2, tail1, tail2 = p.finish()
+            if p.block_size > MIN_BLOCK_SIZE and \
+                    len(sig1) < SPAMSUM_LENGTH // 2:
+                p = self._rerun(p.block_size // 2, reread)
+                continue
+            return "%d:%s:%s" % (p.block_size, sig1 + tail1, sig2 + tail2)
+
+    @staticmethod
+    def _rerun(block_size, reread):
+        p = _Pass(block_size)
+        for chunk in reread():
+            p.feed(chunk)
+        return p
 
 
 def hash_bytes(data):
     """The ssdeep-compatible fuzzy hash of `data`, as "blocksize:sig1:sig2"."""
     if not isinstance(data, (bytes, bytearray)):
         raise TypeError("data must be bytes or bytearray, not %r" % type(data))
-    block_size = _initial_block_size(len(data))
-    while True:
-        sig1, sig2, tail1, tail2 = _piecewise_pass(data, block_size)
-        if block_size > MIN_BLOCK_SIZE and len(sig1) < SPAMSUM_LENGTH // 2:
-            block_size //= 2
-            continue
-        return "%d:%s:%s" % (block_size, sig1 + tail1, sig2 + tail2)
+    h = Hasher(len(data))
+    h.feed(data)
+    return h.digest(lambda: (data,))
 
 
 def _levenshtein(s, t):

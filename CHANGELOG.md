@@ -13,6 +13,16 @@ records, not how the code changed.
 
 ### Fixed
 
+- **"Hash every file" left out files it could not read, and said nothing.**
+  A file whose content could not be read was dropped from the results, and
+  the count of hashed files gave no sign of it. Such files are now listed
+  under "not hashed" with the reason, counted in the summary, and recorded in
+  the audit log as `hash.failed`.
+- **Hashing a very large file could run out of memory.** Each file was read
+  whole before it was hashed. Files are now read and hashed 4 MB at a time,
+  so memory use no longer depends on file size. The digests, including the
+  fuzzy hash, are unchanged.
+
 - **Regular-expression searches never looked at UTF-16LE text.** With Regex
   ticked, the encoding boxes were ignored and only single-byte text was
   searched, in raw media and in file contents alike, while the empty-result

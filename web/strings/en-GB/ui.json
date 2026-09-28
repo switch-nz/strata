@@ -799,6 +799,8 @@
   "timeline.too_deep": "{n} folders were nested too deeply to walk, and are not included.",
   "timeline.truncated": "Stopped after {n} entries — this is not everything that is there.",
   "find.hit_limit": "Stopped at {n} hits. Every hit before {offset} is listed; nothing from there on was searched or is shown.",
+  "hash.failed": "{n} could not be read and have no digest. They are listed here and in the audit log; nothing was left out silently.",
+  "hash.failed_short": "{n} not hashed",
   "timeline.viewing": "{from} → {to} · {n} events",
   "timeline.zoom": "Zoom to selection",
   "timezone_time_display": "Timezone and time display",

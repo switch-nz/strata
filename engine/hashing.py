@@ -22,26 +22,52 @@ def node_key(entry):
     v = node_of(entry)
     return None if v is None else str(v)
 
+CHUNK = 4 << 20
+
+def _chunks(fs, entry, limit):
+    """The file's content, `limit` bytes at most, a piece at a time."""
+    ranged = getattr(fs, "read_range", None)
+    if ranged is None:
+        data = fs.read_file(entry, limit) or b""
+        if data:
+            yield data
+        return
+    off = 0
+    while limit is None or off < limit:
+        want = CHUNK if limit is None else min(CHUNK, limit - off)
+        got = ranged(entry, off, want)
+        if not got:
+            return
+        yield got
+        off += len(got)
+
 def hash_entry(fs, entry, max_bytes=None):
-    md5, sha1, sha256 = hashlib.md5(), hashlib.sha1(), hashlib.sha256()
     size = entry.get("size") or 0
-    data = fs.read_file(entry, max_bytes if max_bytes else size or None)
-    if data is None:
-        data = b""
-    md5.update(data)
-    sha1.update(data)
-    sha256.update(data)
+    limit = max_bytes if max_bytes else (size or None)
+    md5, sha1, sha256 = hashlib.md5(), hashlib.sha1(), hashlib.sha256()
+    fuzzy = fuzzyhash.Hasher(limit or 0)
+    read = 0
+    for chunk in _chunks(fs, entry, limit):
+        md5.update(chunk)
+        sha1.update(chunk)
+        sha256.update(chunk)
+        fuzzy.feed(chunk)
+        read += len(chunk)
     return {
         "node": node_key(entry), "name": entry.get("name"),
         "path": entry.get("path"),
-        "size": size, "read": len(data), "deleted": bool(entry.get("deleted")),
+        "size": size, "read": read, "deleted": bool(entry.get("deleted")),
         "md5": md5.hexdigest(), "sha1": sha1.hexdigest(),
         "sha256": sha256.hexdigest(),
-        "fuzzy": fuzzyhash.hash_bytes(data) if data else None,
-        "partial": bool(size and len(data) < size),
+        "fuzzy": (fuzzy.digest(lambda: _chunks(fs, entry, limit))
+                  if read else None),
+        "partial": bool(size and read < size),
     }
 
-def hash_many(fs, entries, progress=None, max_bytes=None):
+def hash_many(fs, entries, progress=None, max_bytes=None, failures=None):
+    """Hash every file in `entries`. A file that cannot be read is not
+    dropped silently: when `failures` is a list, it gets one row per such
+    file, naming it and saying why."""
     out = []
     total = max(1, len(entries))
     for i, e in enumerate(entries):
@@ -51,8 +77,12 @@ def hash_many(fs, entries, progress=None, max_bytes=None):
             continue
         try:
             out.append(hash_entry(fs, e, max_bytes))
-        except Exception:
-            continue
+        except Exception as exc:
+            if failures is not None:
+                failures.append({"node": node_key(e), "name": e.get("name"),
+                                 "path": e.get("path"),
+                                 "size": e.get("size") or 0,
+                                 "error": str(exc) or type(exc).__name__})
     if progress:
         progress(1.0)
     return out
