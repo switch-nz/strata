@@ -435,6 +435,27 @@ class NtfsRobustness(unittest.TestCase):
                     fs.read_attr(a, max_bytes=1 << 16)
                 fs.stat({"mft": REC["big"]})
 
+    def test_extension_record_is_not_a_tree_node_of_its_own(self):
+        # Found on a real multi-gigabyte volume: every MFT record whose
+        # attributes overflowed into another record (a heavily fragmented
+        # file, one with many alternate streams or hard links) was also
+        # listed as its own top-level file, named "<record number>" since it
+        # carries no $FILE_NAME, because build_tree() did not look at
+        # base_reference. On that volume this was ~27,000 spurious entries.
+        fs = ntfs.NtfsFS(BytesImage(self.good))
+        nodes, children = fs.build_tree()
+        ext = REC["extension"]
+        rec = fs.record(ext, cache=False)
+        self.assertTrue(rec.valid)
+        self.assertTrue(rec.in_use)
+        self.assertEqual(rec.base_reference, REC["hello"])
+        self.assertNotIn(ext, nodes)
+        self.assertNotIn(ext, children.get(5, []))
+        names = {n["name"] for n in fs.listdir(5)}
+        self.assertNotIn("<%d>" % ext, names)
+        # the file it belongs to is unaffected
+        self.assertIn("hello.txt", names)
+
     def test_record_count_bounded_by_volume(self):
         data = bytearray(self.good[:4096])
         data[13] = 8                                  # 4096-byte clusters

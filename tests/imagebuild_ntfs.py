@@ -32,7 +32,7 @@ VOLUME_LABEL = "STRATA"
 REC = {
     "hello": 16, "big": 17, "ads": 18, "deleted": 19, "docs": 20,
     "note": 21, "sparse": 22, "compressed": 23, "twonames": 24,
-    "fixup": 25, "torn": 26, "empty_slot": 27,
+    "fixup": 25, "torn": 26, "extension": 27,
 }
 
 HELLO_TEXT = b"Hello, NTFS!\n"
@@ -250,7 +250,7 @@ def indx_block(entries, vcn=0):
 
 
 def mft_record(number, attrs, in_use=True, is_dir=False, seq=None,
-               tear=False):
+               tear=False, base_reference=0):
     """A FILE record: header, update sequence array (USN + one saved pair
     per 512-byte stride), attributes, 0xFFFFFFFF end marker, then fixups
     applied. ``tear`` corrupts the second stride's check value so the record
@@ -273,7 +273,7 @@ def mft_record(number, attrs, in_use=True, is_dir=False, seq=None,
     assert used <= RECORD, "record %d overflows" % number
     struct.pack_into("<HHQHHHHIIQHHI", body, 4, usa_off, usa_count, 0,
                      number if seq is None else seq, 1, first_attr, flags,
-                     used, RECORD, 0, len(attrs), 0, number)
+                     used, RECORD, base_reference, len(attrs), 0, number)
     _apply_usa(body, usa_off)
     if tear:
         body[2 * SECTOR - 2:2 * SECTOR] = b"\x00\x00"
@@ -324,7 +324,10 @@ def build_ntfs():
       25 fixup.txt      700-byte resident $DATA straddling the stride end at
                         byte 510, so it is only correct once fixups apply
       26 torn.txt       fixup check value wrong in stride 2 (torn write)
-      27-31             zeroed — never formatted
+      27 (extension)    in use, no $FILE_NAME: an overflow record of
+                        hello.txt's, base_reference pointing back at it, as
+                        a real file's $ATTRIBUTE_LIST would reference
+      28-31             zeroed — never formatted
 
     Every user file's $STANDARD_INFORMATION times are ``SI_TIMES`` and its
     $FILE_NAME times ``FN_TIMES``.
@@ -448,6 +451,15 @@ def build_ntfs():
         resident_attr(0x10, std_info()), resident_attr(0x30, fn, indexed=True),
         resident_attr(0x80, b"torn\n")], tear=True)
     root_children.append((n, fn))
+
+    # An extension record: attributes overflowed out of hello.txt's own MFT
+    # record into this one, the way a real $ATTRIBUTE_LIST does. It has no
+    # $FILE_NAME of its own and must never appear as a tree node in its own
+    # right (issue: real volumes with any such record listed thousands of
+    # them under the root with a numeric placeholder name).
+    records[REC["extension"]] = mft_record(
+        REC["extension"], [resident_attr(0x100, b"extra attribute data")],
+        base_reference=(7 << 48) | REC["hello"])
 
     root_children_sorted = sorted(
         root_children,
