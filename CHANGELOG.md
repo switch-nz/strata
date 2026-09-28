@@ -11,6 +11,18 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-28
+
+Adds a cross-log event timeline with event ID descriptions, attributed case
+notes, and dynamic/differencing VHD support; fixes a real-world NTFS bug
+that could clutter the filesystem tree with tens of thousands of spurious
+entries, several other correctness fixes, and much faster registry and
+bulk-hashing work when the optional native module is installed. Upgrade
+from 0.6.1. A previously cached NTFS filesystem tree is rebuilt the next
+time it is opened; hashes of files with stale content past their valid
+data length change the next time they are hashed (see *Fixed* below);
+nothing else in an existing case needs redoing.
+
 ### Added
 
 - **Event logs across a whole volume, on one timeline.** Triage has a new
@@ -979,7 +991,8 @@ Corroborate results in these areas with another tool before relying on them.
   ([#15](https://github.com/switch-nz/strata/issues/15),
   [#19](https://github.com/switch-nz/strata/issues/19)).
 
-[Unreleased]: https://github.com/switch-nz/strata/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/switch-nz/strata/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/switch-nz/strata/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/switch-nz/strata/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/switch-nz/strata/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/switch-nz/strata/compare/v0.5.0...v0.5.1
