@@ -4537,7 +4537,7 @@ class _Server(ThreadingHTTPServer):
         self.server_port = port
 
 def serve(host="127.0.0.1", port=8722, image=None, examiner=None,
-          read_only=False):
+          read_only=False, on_ready=None):
     global READ_ONLY
     READ_ONLY = bool(read_only)
     if image:
@@ -4547,6 +4547,13 @@ def serve(host="127.0.0.1", port=8722, image=None, examiner=None,
     print("Strata engine listening on http://%s:%d" % (host, port))
     if image:
         print("Evidence: %s" % image)
+    if on_ready is not None:
+        # The socket is bound and listening, so a request made now queues
+        # until serve_forever() picks it up rather than being refused.
+        try:
+            on_ready(host, port)
+        except Exception:
+            pass
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

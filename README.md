@@ -173,6 +173,7 @@ python3 run.py --port 9000 --host 0.0.0.0       # serve the interface to another
 | `--port` | `8722` | |
 | `--host` | `127.0.0.1` | serving to other machines is **unauthenticated** — anyone who can reach the port can drive the session; use only on a trusted network |
 | `--browser` | off | open a browser at the interface |
+| `--read-only` | off | refuse export and report writing for this run; examination still works |
 
 Preferences are kept per examiner beside the application, never in a case.
 Set `STRATA_CONFIG_DIR` to put them somewhere else.

@@ -13,6 +13,12 @@ records, not how the code changed.
 
 ### Fixed
 
+- **`--browser` opened the browser before the interface was listening**, so
+  a fast browser could show "connection refused". It now opens once the port
+  is accepting connections, and it also works with `--host 0.0.0.0` (it opens
+  the interface on loopback). `--help` now describes the program and no
+  longer lists Ex01, which is not read. `--read-only` is in the README.
+
 - **A search for several terms lost hits where two terms matched at the same
   place.** Searching raw media for `pass` and `password` together reported
   only the `pass` hit wherever `password` appeared, so the longer term's hits
