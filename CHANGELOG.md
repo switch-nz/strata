@@ -11,8 +11,45 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+### Added
+
+- **Event logs across a whole volume, on one timeline.** Triage has a new
+  Events tab: every `.evtx` file on the volume is decoded and its records
+  merged in time order, so a logon in Security sits beside the service it
+  installed in System. It can be filtered by event ID, provider, text or
+  log, and each log's record count, time span and any damage are shown. A
+  log that could not be read is listed with the reason, not skipped.
+- **Descriptions for well-known event IDs.** Records show a one-line
+  description (for example "A service was installed", or "An account logged
+  on (logon type 10: remote interactive (Remote Desktop))") from a table
+  bundled with Strata, matched by provider as well as ID. They are Strata's
+  own summaries, not the message text the source machine would show, and an
+  event not in the table is shown without one.
+- **Case notes, attributed to whoever writes them.** A new Notes module
+  keeps notes in the case: each shows who wrote it and when. Editing a note
+  keeps the earlier version, under its own writer's name, and withdrawing a
+  note keeps it on the record marked as withdrawn, so nothing anyone wrote
+  is lost or rewritten. Notes written by another examiner on the same case
+  appear within a few seconds. Adding, editing and withdrawing are recorded
+  in the audit log, and the HTML report has a Case notes section with every
+  version and withdrawal.
+- **Dynamic and differencing VHD disks are read.** Only fixed VHDs opened
+  before; dynamic and differencing ones were refused. A dynamic disk is read
+  through its block allocation table, with blocks never written reading as
+  zeros. A differencing disk reads each sector from itself or from its
+  parent, as the disk's own sector bitmaps say. The parent must be in the
+  same folder, under the file name the disk records; a path recorded in the
+  disk is never followed anywhere else, so a crafted disk cannot make
+  Strata open other files. The disk is refused if the parent is missing or
+  is not the exact disk it was made from. The exhibit's details name the parent and how it was found, and list
+  both files.
+
 ### Fixed
 
+- **Running "Windows event logs" from Run artefacts always failed.** The
+  artefact asked the server for a volume's event logs, but the server only
+  read one log at a time and refused the request. It now reads every event
+  log on the volume (see *Added*).
 - **Entries removed from the end of the audit log went unnoticed.** Deleting
   the newest entries, or all of them, still verified as intact. The case now
   records its last entry alongside the log, and each new entry chains from

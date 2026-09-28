@@ -63,6 +63,7 @@ td { border-bottom: 1px solid var(--line); padding: 5px 8px 5px 0;
      vertical-align: top; word-break: break-word; }
 tr:last-child td { border-bottom: 0; }
 .num { text-align: right; white-space: nowrap; }
+.pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .note { color: var(--dim); font-size: 11px; line-height: 1.5;
         margin: 4px 0 14px; }
 .panel { background: var(--panel); border: 1px solid var(--line);
@@ -317,6 +318,33 @@ def render(data, evidence_detail=None, tz=None, index_status=None):
         out.append("<p class=note>%s</p>" % (
             _t("report.held.one") if held == 1
             else _t("report.held.many", held)))
+
+    notes = case.get("notes") or []
+    out.append("<h2>%s</h2>" % _t("report.h.notes"))
+    out.append('<p class="note">%s</p>' % _t("report.note.notes"))
+    rows = []
+    for n in notes:
+        text = '<div class="pre">%s</div>' % _e(n.get("body") or "")
+        history = n.get("history") or []
+        if history:
+            text += '<p class=note>%s</p>' % _t("report.note.edited") + "".join(
+                '<p class=note>%s, %s: %s</p>' % (
+                    _e(h.get("examiner")), _when(h.get("at"), tz),
+                    _e(h.get("body") or ""))
+                for h in history)
+        if n.get("retracted_at"):
+            text = ('<p class=note><b>%s</b></p>' % _t(
+                "report.note.retracted", _e(n.get("retracted_by")),
+                _when(n.get("retracted_at"), tz))) + text
+        who = _e(n.get("author"))
+        if n.get("examiner") != n.get("author"):
+            who += "<br><span class=note>%s %s</span>" % (
+                "&rarr;", _e(n.get("examiner")))
+        rows.append(["%s<br><span class=note>%s</span>" % (
+                         who, _when(n.get("created_at"), tz)),
+                     text])
+    out.append(_table([_t("report.col.written_by"), _t("report.col.text")],
+                      rows, _t("report.empty.notes")))
 
     out.append("<h2>%s</h2>" % _t("report.h.audit"))
     out.append('<p class="note">%s</p>' % _t("report.note.audit"))

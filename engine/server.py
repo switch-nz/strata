@@ -1833,6 +1833,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/bookmarks":
             return self._send(200, s.case.bookmarks(s.evidence_id))
 
+        if path == "/api/notes":
+            if not s.case:
+                return self._send(400, {"error": _t("server.export.case_open")})
+            return self._send(200, {"notes": s.case.notes(
+                include_retracted=self._q("retracted", "") in ("1", "true"))})
+
         if path == "/api/bookmark/categories":
             return self._send(200, {"categories": casedb_mod.MARK_CATEGORIES})
 
@@ -2733,6 +2739,26 @@ class Handler(BaseHTTPRequestHandler):
                               {"updated": ok} if ok else
                               {"error": _t("server.bookmark_update.such_bookmark")})
 
+        if path in ("/api/note", "/api/note/edit", "/api/note/retract"):
+            if not s.case:
+                return self._send(400, {"error": _t("server.export.case_open")})
+            if path == "/api/note/retract":
+                ok = s.case.retract_note(int(body.get("id") or 0))
+                return self._send(200 if ok else 409, {
+                    "retracted": ok, "notes": s.case.notes()} if ok else
+                    {"error": _t("server.note.not_current")})
+            try:
+                if path == "/api/note":
+                    nid = s.case.add_note(body.get("body"))
+                else:
+                    nid = s.case.edit_note(int(body.get("id") or 0),
+                                           body.get("body"))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            if nid is None:
+                return self._send(409, {"error": _t("server.note.not_current")})
+            return self._send(200, {"id": nid, "notes": s.case.notes()})
+
         if path == "/api/bookmark/remove":
             ok = s.case.remove_bookmark(int(body["id"]))
             return self._send(200, {"removed": ok})
@@ -2836,7 +2862,30 @@ class Handler(BaseHTTPRequestHandler):
             fs = s.fs(part)
             entry = body.get("entry")
             if not entry:
-                return self._send(400, {"error": _t("server.evtx.pick_evtx_file")})
+                # No file named: every event log on the volume, as one
+                # timeline across logs.
+                root = _root_node(fs)
+
+                def sweep(progress):
+                    found = [e for e in filesearch_mod.collect(fs, root)
+                             if not e.get("is_dir") and (e.get("size") or 0)
+                             and (e.get("name") or "").lower()
+                             .endswith(".evtx")]
+                    found.sort(key=lambda e: (e.get("path") or "").lower())
+                    logs = [(e.get("name"), e.get("path"),
+                             (lambda e=e: fs.read_file(
+                                 e, evtx_mod.LOG_READ_MAX)))
+                            for e in found]
+                    r = evtx_mod.sweep(logs, progress=progress)
+                    for row, e in zip(r["logs"], found):
+                        row["entry"] = e
+                    return r
+
+                return self._send(200, s.start_task(
+                    "evtx", sweep, label="Reading event logs",
+                    detail="Every .evtx file on the volume, merged into one "
+                           "timeline across logs.",
+                    keep=("evtx", part)))
             limit = int(body.get("limit") or 2000)
             offset = int(body.get("offset") or 0)
 

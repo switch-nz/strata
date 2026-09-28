@@ -23,6 +23,7 @@ is a synthetic volume: every byte of it was generated for this screenshot.*
 | Raw / dd | single-file images and split sets (`.001`, `.002`, …) |
 | VMDK | flat, sparse, and stream-optimized |
 | VHDX | fixed and dynamic; a differencing disk is detected and reported, not merged |
+| VHD | fixed, dynamic and differencing; a differencing disk is read through its parent, which must be the exact disk it was made from |
 | AD1 | AccessData logical images |
 
 **Logical evidence** — a folder, a zip, or a single file opened as an exhibit

@@ -104,6 +104,20 @@ CREATE TABLE IF NOT EXISTS volume_identity (
     key TEXT NOT NULL,
     UNIQUE (evidence_id, part));
 
+-- Case notes: what an examiner wants on the record that is not a mark on
+-- bytes or a tag on a file. Each note names who wrote it and when. A note is
+-- never changed in place: an edit is a new row that `replaces` the old one,
+-- and withdrawing a note sets `retracted_*` on it, so what was written, by
+-- whom and when stays in the record alongside what it says now.
+CREATE TABLE IF NOT EXISTS case_notes (
+    id INTEGER PRIMARY KEY,
+    at TEXT NOT NULL,
+    examiner TEXT,
+    body TEXT NOT NULL,
+    replaces INTEGER,
+    retracted_at TEXT,
+    retracted_by TEXT);
+
 CREATE TABLE IF NOT EXISTS audit (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     at TEXT NOT NULL,
@@ -964,6 +978,8 @@ class Case:
                 "SELECT COUNT(*) c FROM bookmarks").fetchone()["c"],
             "tags": self.db.execute(
                 "SELECT COUNT(*) c FROM tagged_items").fetchone()["c"],
+            "notes": self.db.execute(
+                "SELECT COUNT(*) c FROM case_notes").fetchone()["c"],
             "audit": self.db.execute(
                 "SELECT COUNT(*) c FROM audit").fetchone()["c"],
             "latest": row["examiner"] if row else None,
@@ -1198,6 +1214,91 @@ class Case:
                            utcnow(), evidence_id))
         self.db.commit()
         self.log("evidence.verify", {"evidence_id": evidence_id, **result})
+
+    NOTE_MAX = 20000
+
+    @_writes
+    def add_note(self, body):
+        body = (body or "").strip()
+        if not body:
+            raise ValueError(_t("casedb.note_empty"))
+        body = body[:self.NOTE_MAX]
+        cur = self.db.execute(
+            "INSERT INTO case_notes (at, examiner, body) VALUES (?,?,?)",
+            (utcnow(), self.examiner, body))
+        self.db.commit()
+        self.log("note.add", {"id": cur.lastrowid, "body": body})
+        return cur.lastrowid
+
+    def _current_note(self, nid):
+        row = self.db.execute("SELECT * FROM case_notes WHERE id=?",
+                              (nid,)).fetchone()
+        if not row or row["retracted_at"]:
+            return None
+        newer = self.db.execute("SELECT 1 FROM case_notes WHERE replaces=?",
+                                (nid,)).fetchone()
+        return None if newer else row
+
+    @_writes
+    def edit_note(self, nid, body):
+        """A new version of a note, by whoever is editing it; the version it
+        replaces is kept. Only the current version of a live note can be
+        edited, so two examiners editing at once cannot both win."""
+        body = (body or "").strip()
+        if not body:
+            raise ValueError(_t("casedb.note_empty"))
+        old = self._current_note(nid)
+        if old is None:
+            return None
+        if old["body"] == body[:self.NOTE_MAX]:
+            return nid
+        cur = self.db.execute(
+            "INSERT INTO case_notes (at, examiner, body, replaces) "
+            "VALUES (?,?,?,?)",
+            (utcnow(), self.examiner, body[:self.NOTE_MAX], nid))
+        self.db.commit()
+        self.log("note.edit", {"id": cur.lastrowid, "replaces": nid,
+                               "body": body[:self.NOTE_MAX]})
+        return cur.lastrowid
+
+    @_writes
+    def retract_note(self, nid):
+        if self._current_note(nid) is None:
+            return False
+        self.db.execute(
+            "UPDATE case_notes SET retracted_at=?, retracted_by=? WHERE id=?",
+            (utcnow(), self.examiner, nid))
+        self.db.commit()
+        self.log("note.retract", {"id": nid})
+        return True
+
+    def notes(self, include_retracted=False):
+        """Current notes, newest first, each with its earlier versions
+        (oldest first) under "history". The first version's writer is the
+        note's author; each version names who wrote it."""
+        rows = [dict(r) for r in self.db.execute(
+            "SELECT * FROM case_notes ORDER BY id")]
+        by_id = {r["id"]: r for r in rows}
+        replaced = {r["replaces"] for r in rows if r["replaces"]}
+        out = []
+        for r in rows:
+            if r["id"] in replaced:
+                continue
+            if r["retracted_at"] and not include_retracted:
+                continue
+            chain = []
+            prev = r["replaces"]
+            while prev and prev in by_id and len(chain) < 1000:
+                chain.append(by_id[prev])
+                prev = by_id[prev]["replaces"]
+            chain.reverse()
+            note = dict(r)
+            note["history"] = chain
+            note["author"] = (chain[0] if chain else r)["examiner"]
+            note["created_at"] = (chain[0] if chain else r)["at"]
+            out.append(note)
+        out.sort(key=lambda n: n["created_at"], reverse=True)
+        return out
 
     @_writes
     def add_bookmark(self, evidence_id, offset, length=1, label="", note="",
@@ -1763,6 +1864,7 @@ class Case:
         s["bookmarks"] = self.bookmarks()
         s["tagged"] = self.tagged()
         s["tag_counts"] = self.tag_counts()
+        s["notes"] = self.notes(include_retracted=True)
         s["attack"] = self.attack_tags()
         s["attack_summary"] = self.attack_summary()
         cat = self.attack_catalogue()

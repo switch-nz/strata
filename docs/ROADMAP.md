@@ -39,9 +39,13 @@ recognised and refused by name today; these entries are about *reading* it.
       Verified against genuine `split` and `dd` output; FTK Imager and
       Guymager naming was reconstructed from their documentation and source,
       so sets written by those tools themselves still need checking.
-- [ ] **VHD** (the older `conectix` format, not VHDX) — a fixed VHD is raw
-      with a footer appended and nearly free; dynamic and differencing disks
-      need their own block allocation table.
+- [~] **VHD** (the older `conectix` format, not VHDX) — fixed, dynamic and
+      differencing disks are read. A differencing disk reads through its
+      parent, looked for only beside it under the file name the disk
+      records (locator paths are never followed elsewhere), and is refused
+      if the parent's identifier is not the one it was made from. Verified only against synthetic images built from the published
+      specification; disks written by Virtual PC, Hyper-V and Disk2vhd still
+      need checking.
 - [ ] **QCOW2**, **VDI**, **DMG**, **AFF / AFF4** — AFF4 is ZIP-based and is
       deliberately not matched by signature, since refusing every ordinary
       archive to catch one image format would be wrong far more often than
@@ -94,7 +98,12 @@ recognised and refused by name today; these entries are about *reading* it.
       service worker script cache. Not yet checked on real data: Firefox
       cache2 (synthetic only), and doomed, evicted or freed-block blockfile
       entries (synthetic tests only, no real cache that had entries evicted).
-- [ ] **Event ID descriptions**, and timelining across logs.
+- [~] **Event ID descriptions**, and timelining across logs — a bundled
+      table describes well-known IDs by provider (Strata's own summaries,
+      not the providers' message text, which is not read), and every
+      `.evtx` on a volume merges into one timeline in Triage → Events.
+      Rendering the providers' own messages from their manifests is still
+      open, and neither has been checked against logs from real machines.
 - [~] **PST:** ANSI (32-bit) files are read, from the layouts in [MS-PST]
       and synthetic files built from them; no real ANSI file has been
       checked yet. OST-specific structures are not handled.
@@ -188,7 +197,9 @@ Agreeing with another tool is agreement, not verification.
       make this mostly an interface problem.
 - [x] Diff two images, or two snapshots of one volume.
 - [ ] Scripting or plugin API for custom parsers.
-- [ ] Multi-examiner case notes with attribution.
+- [x] Multi-examiner case notes with attribution — each version names its
+      writer and time; edits add a version and withdrawals are flagged, so
+      nothing is changed in place. In the Notes module and the report.
 - [~] Localisation — the interface and engine messages already load from
       `web/strings/`; only English (en-GB) exists.
 
