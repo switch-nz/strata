@@ -486,6 +486,8 @@
   "kv.table_type": "Table type",
   "kv.taken": "Taken",
   "kv.tool": "Tool",
+  "kv.parent_disk": "Parent disk",
+  "kv.parent_found_by": "Parent found by",
   "kv.transaction": "Transaction",
   "kv.valid_data": "Valid data",
   "kv.volume_name": "Volume name",

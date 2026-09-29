@@ -1717,8 +1717,8 @@ function showPartition(p) {
   if (p === S.image || p.format) {
     const a = S.image.acquisition || {};
     i.innerHTML = `
-      <div class="title">${S.image.segments[0]}</div>
-      <div class="subtitle">${S.image.format}</div>
+      <div class="title">${esc(S.image.segments[0])}</div>
+      <div class="subtitle">${esc(S.image.format)}</div>
       ${kv([
         [txt('ui.kv.size'), fmt.bytes(S.image.size), true],
         [txt('ui.kv.sectors'), (S.image.sector_count || 0).toLocaleString()],
@@ -1728,20 +1728,23 @@ function showPartition(p) {
       ])}
       <h3>${txt('ui.show_partition.acquisition')}</h3>
       ${kv([
-        a.case_number && [txt('ui.kv.case'), a.case_number],
-        a.evidence_number && [txt('ui.kv.evidence'), a.evidence_number],
-        a.examiner && [txt('ui.kv.examiner'), a.examiner],
-        a.acquisition_date && [txt('ui.kv.acquired'), a.acquisition_date],
-        a.acquiry_software && [txt('ui.kv.tool'), a.acquiry_software],
+        a.case_number && [txt('ui.kv.case'), esc(a.case_number)],
+        a.evidence_number && [txt('ui.kv.evidence'), esc(a.evidence_number)],
+        a.examiner && [txt('ui.kv.examiner'), esc(a.examiner)],
+        a.acquisition_date && [txt('ui.kv.acquired'), esc(a.acquisition_date)],
+        a.acquiry_software && [txt('ui.kv.tool'), esc(a.acquiry_software)],
+        a.parent && [txt('ui.kv.parent_disk'), esc(a.parent)],
+        a.parent && a['parent found by']
+          && [txt('ui.kv.parent_found_by'), esc(a['parent found by'])],
       ])}
       <h3>${txt('ui.stored_hashes')}</h3>
       ${kv([
-        [txt('ui.kv.md5'), S.image.stored_md5 || 'not stored'],
-        [txt('ui.kv.sha_1'), S.image.stored_sha1 || 'not stored'],
+        [txt('ui.kv.md5'), esc(S.image.stored_md5 || 'not stored')],
+        [txt('ui.kv.sha_1'), esc(S.image.stored_sha1 || 'not stored')],
       ])}
       ${(S.image.findings || []).length ? `<div class="notice bad">
         <strong>${S.image.findings.length} structural finding(s)</strong><br>
-        ${S.image.findings.slice(0, 6).join('<br>')}</div>` : ''}
+        ${S.image.findings.slice(0, 6).map(esc).join('<br>')}</div>` : ''}
       <div class="actions">
         <button class="ghost" id="btn-verify">${txt('ui.verify_hashes')}</button>
       </div>`;

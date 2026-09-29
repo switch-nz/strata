@@ -13,6 +13,16 @@ records, not how the code changed.
 
 ### Fixed
 
+- **Text from an image was shown unescaped in the exhibit details, so a
+  crafted name could run script in Strata.** The exhibit's name, format,
+  acquisition fields (case and evidence numbers, examiner, tool), stored
+  hashes and structural findings were written into the page as markup. A
+  file name such as `<img src=x onerror=...>.vhd`, reachable now that a
+  differencing disk's parent is opened by the name the disk records, executed
+  when the exhibit was selected. Every one of these values is now shown as
+  plain text.
+- **The exhibit details did not show a differencing VHD's parent.** They now
+  list the parent disk and how it was found.
 - **A differencing VHD could read its parent from any file on the machine.**
   A disk records where its parent lives, and that path was followed. Only the
   file name it records is used now, and only in the disk's own folder, so a
