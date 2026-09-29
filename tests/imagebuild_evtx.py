@@ -69,8 +69,7 @@ def event(event_id, provider, when, channel="Security", computer="WS01",
     return E("Event", None, None, system, E("EventData", None, None, *datas))
 
 
-def build_log(events, dirty=False):
-    """events: list of element builders from event(). One chunk."""
+def _chunk(events):
     chunk = bytearray(CHUNK_SIZE)
     chunk[0:8] = b"ElfChnk\x00"
     rp = CHUNK_HEADER
@@ -81,17 +80,35 @@ def build_log(events, dirty=False):
         size = 24 + len(p.b) + 4
         rec = (b"\x2a\x2a\x00\x00" + struct.pack("<IQQ", size, rid, 0)
                + bytes(p.b) + struct.pack("<I", size))
+        if rp + size > CHUNK_SIZE:
+            raise ValueError("too many events for one chunk")
         chunk[rp:rp + size] = rec
         rp += size
     struct.pack_into("<QQQQ", chunk, 8, 1, len(events), 1, len(events))
     struct.pack_into("<I", chunk, 0x30, rp)
+    return bytes(chunk)
+
+
+def _header(records, chunks, dirty):
     head = bytearray(HEADER_SIZE)
     head[0:8] = b"ElfFile\x00"
-    struct.pack_into("<QQQ", head, 8, 0, 0, len(events) + 1)
+    struct.pack_into("<QQQ", head, 8, 0, 0, records + 1)
     struct.pack_into("<IHH", head, 32, 128, 1, 3)
-    struct.pack_into("<HH", head, 40, HEADER_SIZE, 1)
+    struct.pack_into("<HH", head, 40, HEADER_SIZE, chunks)
     struct.pack_into("<I", head, 120, 1 if dirty else 0)
-    return bytes(head) + bytes(chunk)
+    return bytes(head)
+
+
+def build_log(events, dirty=False):
+    """events: list of element builders from event(). One chunk."""
+    return _header(len(events), 1, dirty) + _chunk(events)
+
+
+def build_log_chunks(groups, dirty=False):
+    """A log of several chunks: `groups` is a list of event lists, one per
+    chunk."""
+    return (_header(sum(len(g) for g in groups), len(groups), dirty)
+            + b"".join(_chunk(g) for g in groups))
 
 
 # ---------------------------------------------------------------------------

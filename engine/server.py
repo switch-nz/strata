@@ -163,6 +163,25 @@ def _within(root, candidate):
 class TaskCancelled(Exception):
     pass
 
+class LogReader:
+    """A file read a piece at a time, so a sweep over big event logs holds a
+    chunk of one and not the whole file."""
+
+    def __init__(self, fs, entry):
+        self.fs = fs
+        self.entry = entry
+        self.size = int(entry.get("size") or 0)
+
+    def read_at(self, offset, length):
+        length = min(length, self.size - offset)
+        if offset < 0 or length <= 0:
+            return b""
+        ranged = getattr(self.fs, "read_range", None)
+        if ranged is not None:
+            return ranged(self.entry, offset, length)
+        return self.fs.read_file(self.entry, offset + length)[
+            offset:offset + length]
+
 class FileRegion:
 
     def __init__(self, fs, entry, size, stream="", cache=None):
@@ -2895,9 +2914,8 @@ class Handler(BaseHTTPRequestHandler):
                     found.sort(key=lambda e: ((e.get("path") or "").lower(),
                                               bool(e.get("deleted"))))
                     logs = [(e.get("name"), e.get("path"),
-                             (lambda e=e: fs.read_file(
-                                 e, evtx_mod.LOG_READ_MAX)),
-                             e.get("size"), bool(e.get("deleted")))
+                             LogReader(fs, e), e.get("size"),
+                             bool(e.get("deleted")))
                             for e in found]
                     r = evtx_mod.sweep(logs, progress=progress)
                     for row, e in zip(r["logs"], found):

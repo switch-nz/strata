@@ -189,14 +189,15 @@ class OddValues(unittest.TestCase):
 
     def test_a_log_over_the_read_limit_says_records_are_missing(self):
         old = evtx.LOG_READ_MAX
-        evtx.LOG_READ_MAX = 1000
+        evtx.LOG_READ_MAX = 4096 + 65536          # header and one chunk
         self.addCleanup(setattr, evtx, "LOG_READ_MAX", old)
         good = build.template_log([self.normal()])
-        r = evtx.sweep([("Big.evtx", "/Big.evtx", lambda: good, 5000),
-                        ("Small.evtx", "/Small.evtx", lambda: good, 900)])
+        r = evtx.sweep([
+            ("Big.evtx", "/Big.evtx", lambda: good, 5 * evtx.LOG_READ_MAX),
+            ("Small.evtx", "/Small.evtx", lambda: good, 900)])
         big, small = r["logs"]
         self.assertTrue(big["partial"])
-        self.assertTrue(any("only the first 1000" in f
+        self.assertTrue(any("only the first %d" % evtx.LOG_READ_MAX in f
                             for f in big["findings"]))
         self.assertFalse(small.get("partial"))
         self.assertEqual(small["findings"], [])
@@ -234,6 +235,132 @@ class DeletedLogs(unittest.TestCase):
         r = evtx.sweep([("A.evtx", "/A.evtx", security_log)])
         self.assertFalse(r["logs"][0]["deleted"])
         self.assertTrue(all(e["deleted"] is False for e in r["events"]))
+
+
+class Cancelled(Exception):
+    """Stands in for the server's TaskCancelled, an ordinary Exception."""
+
+
+class CountingReader:
+    def __init__(self, data):
+        self.data = data
+        self.size = len(data)
+        self.chunk_reads = 0
+        self.largest = 0
+
+    def read_at(self, offset, length):
+        if length >= evtx.CHUNK_SIZE:
+            self.chunk_reads += 1
+        self.largest = max(self.largest, length)
+        return self.data[offset:offset + length]
+
+
+PER_CHUNK = 60
+
+
+def big_log(chunks=40, per_chunk=PER_CHUNK):
+    groups = []
+    for c in range(chunks):
+        groups.append([
+            build.event(4624 + (i % 5), SEC,
+                        "2024-03-%02dT%02d:%02d:00.000Z" % (
+                            1 + c % 28, i % 24, i % 60),
+                        data={"LogonType": 3, "TargetUserName": "u%d" % i})
+            for i in range(per_chunk)])
+    return build.build_log_chunks(groups)
+
+
+class Streaming(unittest.TestCase):
+    """A sweep reads a log a chunk at a time: memory does not grow with the
+    log, and cancelling takes effect within a chunk."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.data = big_log()
+
+    def test_a_chunk_at_a_time_reads_the_same_records_as_parse(self):
+        whole = evtx.parse(self.data)["records"]
+        scan = evtx.LogScan(CountingReader(self.data).read_at,
+                            len(self.data))
+        self.assertTrue(scan.valid)
+        streamed = list(scan.records())
+        self.assertEqual(len(streamed), len(whole))
+        self.assertEqual(
+            [(r["record_id"], r["event_id"], r["provider"], r["created"],
+              r["description"]) for r in streamed],
+            [(r["record_id"], r["event_id"], r["provider"], r["created"],
+              r["description"]) for r in whole])
+        self.assertTrue(all("fields" not in r for r in streamed))
+        self.assertEqual(scan.chunks, 40)
+
+    def test_memory_does_not_grow_with_the_log(self):
+        import tracemalloc
+        reader = CountingReader(self.data)
+        tracemalloc.start()
+        r = evtx.sweep([("Big.evtx", "/Big.evtx", reader, len(self.data),
+                         False)], max_events=50)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        self.assertEqual(r["total_events"], 40 * PER_CHUNK)
+        self.assertEqual(len(r["events"]), 50)
+        self.assertEqual(reader.chunk_reads, 40)
+        self.assertLessEqual(reader.largest, evtx.CHUNK_SIZE)
+        # The log is ~2.6 MB; a chunk and fifty events are far below that,
+        # where reading and parsing the whole thing was well above it.
+        self.assertLess(peak, len(self.data) // 4)
+        tracemalloc.start()
+        evtx.parse(self.data)
+        _, whole_peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        self.assertGreater(whole_peak, peak * 4)
+
+    def test_the_newest_events_are_kept_and_in_order(self):
+        r = evtx.sweep([("Big.evtx", "/Big.evtx", CountingReader(self.data))],
+                       max_events=25)
+        times = [e["time"] for e in r["events"]]
+        self.assertEqual(times, sorted(times))
+        everything = evtx.sweep([("Big.evtx", "/Big.evtx",
+                                  CountingReader(self.data))],
+                                max_events=10 ** 6)["events"]
+        self.assertEqual([e["record_id"] for e in r["events"]],
+                         [e["record_id"] for e in everything[-25:]])
+        self.assertEqual(r["total_events"], len(everything))
+        self.assertTrue(r["truncated"])
+
+    def test_a_cancel_between_chunks_stops_the_reading_promptly(self):
+        reader = CountingReader(self.data)
+        calls = []
+
+        def progress(p):
+            calls.append(p)
+            if len(calls) == 6:
+                raise Cancelled()
+
+        with self.assertRaises(Cancelled):
+            evtx.sweep([("Big.evtx", "/Big.evtx", reader)],
+                       progress=progress)
+        self.assertLessEqual(reader.chunk_reads, 6)
+        self.assertLess(reader.chunk_reads, 40)
+
+    def test_progress_advances_with_the_chunks_and_ends_at_one(self):
+        calls = []
+        evtx.sweep([("Big.evtx", "/Big.evtx", CountingReader(self.data))],
+                   progress=calls.append)
+        self.assertGreater(len(calls), 30)
+        self.assertEqual(calls[-1], 1.0)
+        self.assertTrue(all(0 <= a <= 1 for a in calls))
+        self.assertEqual(calls, sorted(calls))
+
+    def test_a_log_that_fails_partway_keeps_what_was_read(self):
+        data = bytearray(self.data)
+        # Damage the third chunk's magic: reading stops there, quietly (a
+        # damaged chunk ends a log, as it does for parse()).
+        third = 4096 + 2 * evtx.CHUNK_SIZE
+        data[third:third + 8] = b"XXXXXXXX"
+        r = evtx.sweep([("Big.evtx", "/Big.evtx",
+                         CountingReader(bytes(data)))])
+        self.assertEqual(r["logs"][0]["records"], 2 * PER_CHUNK)
+        self.assertNotIn("error", r["logs"][0])
 
 
 class SweepRoute(unittest.TestCase):

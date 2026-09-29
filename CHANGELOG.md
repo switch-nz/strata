@@ -13,6 +13,12 @@ records, not how the code changed.
 
 ### Fixed
 
+- **Sweeping event logs across a volume could use large amounts of memory
+  and could not be cancelled promptly.** Every log was read whole and every
+  event kept before the newest were picked. Logs are now read a chunk at a
+  time, only the newest events are kept, cancelling takes effect within a
+  chunk, and a log that stops being readable partway keeps what was read and
+  says so.
 - **Events from deleted event logs were merged among the live ones with
   nothing to tell them apart.** The volume-wide Events timeline also read
   `.evtx` files that had been deleted, whose clusters may have been reused
