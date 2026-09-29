@@ -11,6 +11,33 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Opening another case could leave the Notes panel showing the previous
+  case's notes, and Withdraw or Edit then changed a different note in the new
+  case.** Notes are now reloaded whenever a case or image is opened, and every
+  change names the case the note was read from; a request from a page still
+  showing another case is refused and the notes on screen are reloaded.
+- **Notes could not be read or written in a case with no exhibit loaded**, so
+  a new case, or one opened without evidence, showed "No notes" even when it
+  held some. Notes belong to the case and now work there.
+- **Two Strata instances editing the same note at once could split it in
+  two, or lose a withdrawal.** The check and the write now happen under the
+  case database's write lock, so exactly one edit wins.
+- **Another examiner's withdrawal never appeared in your Notes panel until
+  you acted on the note and were refused.** Withdrawals now refresh the
+  panel, and an edit by someone else is no longer announced as "added 1
+  item".
+- **A refresh of the Notes panel discarded an edit in progress.** Your
+  unsaved text now stays where it is; if the note was withdrawn or replaced
+  meanwhile, the text is moved into the new-note box with a message.
+- **A note longer than 20,000 characters was silently cut.** It is now
+  refused, with a message, so a note never records less than its writer
+  wrote.
+- **The report showed an edited note under its creation time**, and lost the
+  line breaks in earlier versions. It now says who wrote the current version
+  and when, and keeps earlier versions' line breaks.
+
 ## [0.7.0] - 2026-09-28
 
 Adds a cross-log event timeline with event ID descriptions, attributed case

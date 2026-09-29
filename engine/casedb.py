@@ -1,3 +1,4 @@
+import contextlib
 import functools
 import hashlib
 import json
@@ -978,8 +979,15 @@ class Case:
                 "SELECT COUNT(*) c FROM bookmarks").fetchone()["c"],
             "tags": self.db.execute(
                 "SELECT COUNT(*) c FROM tagged_items").fetchone()["c"],
+            # New notes only: an edit is a new version, not a new item.
             "notes": self.db.execute(
-                "SELECT COUNT(*) c FROM case_notes").fetchone()["c"],
+                "SELECT COUNT(*) c FROM case_notes WHERE replaces IS NULL")
+                .fetchone()["c"],
+            # Changes with every add, edit and withdrawal, so another
+            # examiner's view refreshes for all three.
+            "notes_rev": "%d:%d:%d" % tuple(self.db.execute(
+                "SELECT COUNT(*), COUNT(retracted_at), COALESCE(MAX(id), 0) "
+                "FROM case_notes").fetchone()),
             "audit": self.db.execute(
                 "SELECT COUNT(*) c FROM audit").fetchone()["c"],
             "latest": row["examiner"] if row else None,
@@ -1217,12 +1225,33 @@ class Case:
 
     NOTE_MAX = 20000
 
-    @_writes
-    def add_note(self, body):
+    def _note_body(self, body):
         body = (body or "").strip()
         if not body:
             raise ValueError(_t("casedb.note_empty"))
-        body = body[:self.NOTE_MAX]
+        if len(body) > self.NOTE_MAX:
+            # Refused rather than cut: a note that silently lost its end
+            # would be on the record as something its writer never wrote.
+            raise ValueError(_t("casedb.note_too_long") % self.NOTE_MAX)
+        return body
+
+    @contextlib.contextmanager
+    def _write_lock(self):
+        """SQLite's write lock for a check-then-write: the in-process lock
+        does not reach another Strata on the same case folder."""
+        if self.db.in_transaction:
+            self.db.commit()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+        except BaseException:
+            self.db.rollback()
+            raise
+        self.db.commit()
+
+    @_writes
+    def add_note(self, body):
+        body = self._note_body(body)
         cur = self.db.execute(
             "INSERT INTO case_notes (at, examiner, body) VALUES (?,?,?)",
             (utcnow(), self.examiner, body))
@@ -1243,32 +1272,31 @@ class Case:
     def edit_note(self, nid, body):
         """A new version of a note, by whoever is editing it; the version it
         replaces is kept. Only the current version of a live note can be
-        edited, so two examiners editing at once cannot both win."""
-        body = (body or "").strip()
-        if not body:
-            raise ValueError(_t("casedb.note_empty"))
-        old = self._current_note(nid)
-        if old is None:
-            return None
-        if old["body"] == body[:self.NOTE_MAX]:
-            return nid
-        cur = self.db.execute(
-            "INSERT INTO case_notes (at, examiner, body, replaces) "
-            "VALUES (?,?,?,?)",
-            (utcnow(), self.examiner, body[:self.NOTE_MAX], nid))
-        self.db.commit()
+        edited, so two examiners editing at once cannot both win -- checked
+        and written under the database's write lock, so that holds across
+        processes too."""
+        body = self._note_body(body)
+        with self._write_lock():
+            old = self._current_note(nid)
+            if old is None:
+                return None
+            if old["body"] == body:
+                return nid
+            cur = self.db.execute(
+                "INSERT INTO case_notes (at, examiner, body, replaces) "
+                "VALUES (?,?,?,?)", (utcnow(), self.examiner, body, nid))
         self.log("note.edit", {"id": cur.lastrowid, "replaces": nid,
-                               "body": body[:self.NOTE_MAX]})
+                               "body": body})
         return cur.lastrowid
 
     @_writes
     def retract_note(self, nid):
-        if self._current_note(nid) is None:
-            return False
-        self.db.execute(
-            "UPDATE case_notes SET retracted_at=?, retracted_by=? WHERE id=?",
-            (utcnow(), self.examiner, nid))
-        self.db.commit()
+        with self._write_lock():
+            if self._current_note(nid) is None:
+                return False
+            self.db.execute(
+                "UPDATE case_notes SET retracted_at=?, retracted_by=? "
+                "WHERE id=?", (utcnow(), self.examiner, nid))
         self.log("note.retract", {"id": nid})
         return True
 

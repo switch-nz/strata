@@ -327,8 +327,11 @@ def render(data, evidence_detail=None, tz=None, index_status=None):
         text = '<div class="pre">%s</div>' % _e(n.get("body") or "")
         history = n.get("history") or []
         if history:
+            text = ('<p class=note>%s</p>' % _t(
+                "report.note.current", _e(n.get("examiner")),
+                _when(n.get("at"), tz))) + text
             text += '<p class=note>%s</p>' % _t("report.note.edited") + "".join(
-                '<p class=note>%s, %s: %s</p>' % (
+                '<p class=note>%s, %s:</p><div class="pre note">%s</div>' % (
                     _e(h.get("examiner")), _when(h.get("at"), tz),
                     _e(h.get("body") or ""))
                 for h in history)
@@ -337,9 +340,6 @@ def render(data, evidence_detail=None, tz=None, index_status=None):
                 "report.note.retracted", _e(n.get("retracted_by")),
                 _when(n.get("retracted_at"), tz))) + text
         who = _e(n.get("author"))
-        if n.get("examiner") != n.get("author"):
-            who += "<br><span class=note>%s %s</span>" % (
-                "&rarr;", _e(n.get("examiner")))
         rows.append(["%s<br><span class=note>%s</span>" % (
                          who, _when(n.get("created_at"), tz)),
                      text])

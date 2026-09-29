@@ -815,6 +815,7 @@
   "notes.none": "No notes in this case yet.",
   "notes.no_case": "Open or create a case to keep notes in it.",
   "notes.confirm_withdraw": "Withdraw this note? It stays in the case record and the report, marked as withdrawn.",
+  "notes.changed_while_editing": "The note you were editing was changed or withdrawn by someone else. Your text has been kept in the new-note box.",
   "find.hit_limit": "Stopped at {n} hits. Every hit before {offset} is listed; nothing from there on was searched or is shown.",
   "hash.failed": "{n} could not be read and have no digest. They are listed here and in the audit log; nothing was left out silently.",
   "hash.failed_short": "{n} not hashed",

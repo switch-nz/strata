@@ -1159,6 +1159,14 @@ class Handler(BaseHTTPRequestHandler):
                 "running": sum(1 for t in items if t["state"] == "running"),
             })
 
+        if path == "/api/notes":
+            # Notes belong to the case, not an exhibit: a case with no
+            # evidence loaded still has them.
+            if not s.case:
+                return self._send(400, {"error": _t("server.export.case_open")})
+            return self._send(200, {"case": s.case.path, "notes": s.case.notes(
+                include_retracted=self._q("retracted", "") in ("1", "true"))})
+
         if not s.image:
             return self._send(409, {"error": _t("server.case_peek.evidence_open")})
 
@@ -1833,12 +1841,6 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/bookmarks":
             return self._send(200, s.case.bookmarks(s.evidence_id))
 
-        if path == "/api/notes":
-            if not s.case:
-                return self._send(400, {"error": _t("server.export.case_open")})
-            return self._send(200, {"notes": s.case.notes(
-                include_retracted=self._q("retracted", "") in ("1", "true"))})
-
         if path == "/api/bookmark/categories":
             return self._send(200, {"categories": casedb_mod.MARK_CATEGORIES})
 
@@ -2492,6 +2494,34 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"unavailable": str(exc)})
             return self._send(200, {"path": chosen, "cancelled": not chosen})
 
+        if path in ("/api/note", "/api/note/edit", "/api/note/retract"):
+            if not s.case:
+                return self._send(400, {"error": _t("server.export.case_open")})
+            # The id is only meaningful in the case the note was read from;
+            # a page still showing another case's notes must not act here.
+            shown = body.get("case")
+            if not shown or os.path.abspath(shown) != \
+                    os.path.abspath(s.case.path):
+                return self._send(409, {"error": _t("server.note.other_case"),
+                                        "case": s.case.path,
+                                        "notes": s.case.notes()})
+            if path == "/api/note/retract":
+                ok = s.case.retract_note(int(body.get("id") or 0))
+                return self._send(200 if ok else 409, {
+                    "retracted": ok, "notes": s.case.notes()} if ok else
+                    {"error": _t("server.note.not_current")})
+            try:
+                if path == "/api/note":
+                    nid = s.case.add_note(body.get("body"))
+                else:
+                    nid = s.case.edit_note(int(body.get("id") or 0),
+                                           body.get("body"))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            if nid is None:
+                return self._send(409, {"error": _t("server.note.not_current")})
+            return self._send(200, {"id": nid, "notes": s.case.notes()})
+
         if not s.image:
             return self._send(409, {"error": _t("server.case_peek.evidence_open")})
 
@@ -2738,26 +2768,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200 if ok else 404,
                               {"updated": ok} if ok else
                               {"error": _t("server.bookmark_update.such_bookmark")})
-
-        if path in ("/api/note", "/api/note/edit", "/api/note/retract"):
-            if not s.case:
-                return self._send(400, {"error": _t("server.export.case_open")})
-            if path == "/api/note/retract":
-                ok = s.case.retract_note(int(body.get("id") or 0))
-                return self._send(200 if ok else 409, {
-                    "retracted": ok, "notes": s.case.notes()} if ok else
-                    {"error": _t("server.note.not_current")})
-            try:
-                if path == "/api/note":
-                    nid = s.case.add_note(body.get("body"))
-                else:
-                    nid = s.case.edit_note(int(body.get("id") or 0),
-                                           body.get("body"))
-            except ValueError as exc:
-                return self._send(400, {"error": str(exc)})
-            if nid is None:
-                return self._send(409, {"error": _t("server.note.not_current")})
-            return self._send(200, {"id": nid, "notes": s.case.notes()})
 
         if path == "/api/bookmark/remove":
             ok = s.case.remove_bookmark(int(body["id"]))
