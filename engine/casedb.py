@@ -1,3 +1,4 @@
+import contextlib
 import functools
 import hashlib
 import json
@@ -17,6 +18,10 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY, value TEXT);
 
+-- `parents` is the other disks an exhibit reads through (a differencing
+-- VHD's parents, nearest first) as a JSON list of paths. What the exhibit
+-- shows is only meaningful with them, so the case records which files they
+-- were; NULL where there are none, or before this was recorded.
 CREATE TABLE IF NOT EXISTS evidence (
     id INTEGER PRIMARY KEY,
     path TEXT NOT NULL,
@@ -29,7 +34,8 @@ CREATE TABLE IF NOT EXISTS evidence (
     verified_sha1 TEXT,
     verified_at TEXT,
     kind TEXT,
-    added_at TEXT NOT NULL);
+    added_at TEXT NOT NULL,
+    parents TEXT);
 
 CREATE TABLE IF NOT EXISTS bookmarks (
     id INTEGER PRIMARY KEY,
@@ -527,6 +533,7 @@ class Case:
         self._migrate_fuzzy_hash()
         self._migrate_bookmark_frame()
         self._migrate_evidence_kind()
+        self._migrate_evidence_parents()
         self._migrate_tagged_items()
         self.index_reset = False
         self.index_db = None
@@ -572,6 +579,12 @@ class Case:
                             (infer_kind(row["path"], row["format"]),
                              row["id"]))
         self.db.commit()
+
+    def _migrate_evidence_parents(self):
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(evidence)")}
+        if "parents" not in cols:
+            self.db.execute("ALTER TABLE evidence ADD COLUMN parents TEXT")
+            self.db.commit()
 
     def _migrate_tagged_items(self):
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(tagged_items)")}
@@ -978,8 +991,15 @@ class Case:
                 "SELECT COUNT(*) c FROM bookmarks").fetchone()["c"],
             "tags": self.db.execute(
                 "SELECT COUNT(*) c FROM tagged_items").fetchone()["c"],
+            # New notes only: an edit is a new version, not a new item.
             "notes": self.db.execute(
-                "SELECT COUNT(*) c FROM case_notes").fetchone()["c"],
+                "SELECT COUNT(*) c FROM case_notes WHERE replaces IS NULL")
+                .fetchone()["c"],
+            # Changes with every add, edit and withdrawal, so another
+            # examiner's view refreshes for all three.
+            "notes_rev": "%d:%d:%d" % tuple(self.db.execute(
+                "SELECT COUNT(*), COUNT(retracted_at), COALESCE(MAX(id), 0) "
+                "FROM case_notes").fetchone()),
             "audit": self.db.execute(
                 "SELECT COUNT(*) c FROM audit").fetchone()["c"],
             "latest": row["examiner"] if row else None,
@@ -1134,22 +1154,55 @@ class Case:
         return {"intact": True, "broken_at": None}
 
     @_writes
-    def add_evidence(self, path, info, label=None):
-        row = self.db.execute("SELECT id FROM evidence WHERE path=?",
+    def add_evidence(self, path, info, label=None, parents=None):
+        parents = [str(p) for p in (parents or [])]
+        blob = json.dumps(parents) if parents else None
+        row = self.db.execute("SELECT id, parents FROM evidence WHERE path=?",
                               (path,)).fetchone()
         if row:
+            if blob and not row["parents"]:
+                # Added before the chain was recorded.
+                self.db.execute("UPDATE evidence SET parents=? WHERE id=?",
+                                (blob, row["id"]))
+                self.db.commit()
+                self.log("evidence.parents", {"evidence_id": row["id"],
+                                              "parents": parents})
             return row["id"]
         kind = (info.get("kind") or "file") if info.get("logical") else "image"
         cur = self.db.execute(
             "INSERT INTO evidence (path,label,format,size,stored_md5,stored_sha1,"
-            "kind,added_at) VALUES (?,?,?,?,?,?,?,?)",
+            "kind,added_at,parents) VALUES (?,?,?,?,?,?,?,?,?)",
             (path, label or os.path.basename(path), info.get("format"),
              info.get("size"), info.get("stored_md5"), info.get("stored_sha1"),
-             kind, utcnow()))
+             kind, utcnow(), blob))
         self.db.commit()
         self.log("evidence.add", {"path": path, "size": info.get("size"),
-                                  "stored_md5": info.get("stored_md5")})
+                                  "stored_md5": info.get("stored_md5"),
+                                  "parents": parents or None})
         return cur.lastrowid
+
+    @staticmethod
+    def _chain_of(path, parents_blob):
+        chain = {os.path.realpath(path)}
+        try:
+            chain.update(os.path.realpath(p)
+                         for p in json.loads(parents_blob or "[]"))
+        except (TypeError, ValueError):
+            pass
+        return chain
+
+    def related_evidence(self, path, parents=()):
+        """Ids of exhibits that share a disk with this one: its parents, its
+        children, and its siblings (other children of the same parent).
+        They are different states of one volume, not re-acquisitions of it."""
+        mine = self._chain_of(path, json.dumps(list(parents)))
+        related = set()
+        for row in self.db.execute("SELECT id, path, parents FROM evidence"):
+            if os.path.realpath(row["path"]) == os.path.realpath(path):
+                continue
+            if mine & self._chain_of(row["path"], row["parents"]):
+                related.add(row["id"])
+        return related
 
     def evidence_kind(self, path):
         row = self.db.execute("SELECT * FROM evidence WHERE path=?",
@@ -1217,12 +1270,33 @@ class Case:
 
     NOTE_MAX = 20000
 
-    @_writes
-    def add_note(self, body):
+    def _note_body(self, body):
         body = (body or "").strip()
         if not body:
             raise ValueError(_t("casedb.note_empty"))
-        body = body[:self.NOTE_MAX]
+        if len(body) > self.NOTE_MAX:
+            # Refused rather than cut: a note that silently lost its end
+            # would be on the record as something its writer never wrote.
+            raise ValueError(_t("casedb.note_too_long") % self.NOTE_MAX)
+        return body
+
+    @contextlib.contextmanager
+    def _write_lock(self):
+        """SQLite's write lock for a check-then-write: the in-process lock
+        does not reach another Strata on the same case folder."""
+        if self.db.in_transaction:
+            self.db.commit()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+        except BaseException:
+            self.db.rollback()
+            raise
+        self.db.commit()
+
+    @_writes
+    def add_note(self, body):
+        body = self._note_body(body)
         cur = self.db.execute(
             "INSERT INTO case_notes (at, examiner, body) VALUES (?,?,?)",
             (utcnow(), self.examiner, body))
@@ -1243,32 +1317,31 @@ class Case:
     def edit_note(self, nid, body):
         """A new version of a note, by whoever is editing it; the version it
         replaces is kept. Only the current version of a live note can be
-        edited, so two examiners editing at once cannot both win."""
-        body = (body or "").strip()
-        if not body:
-            raise ValueError(_t("casedb.note_empty"))
-        old = self._current_note(nid)
-        if old is None:
-            return None
-        if old["body"] == body[:self.NOTE_MAX]:
-            return nid
-        cur = self.db.execute(
-            "INSERT INTO case_notes (at, examiner, body, replaces) "
-            "VALUES (?,?,?,?)",
-            (utcnow(), self.examiner, body[:self.NOTE_MAX], nid))
-        self.db.commit()
+        edited, so two examiners editing at once cannot both win -- checked
+        and written under the database's write lock, so that holds across
+        processes too."""
+        body = self._note_body(body)
+        with self._write_lock():
+            old = self._current_note(nid)
+            if old is None:
+                return None
+            if old["body"] == body:
+                return nid
+            cur = self.db.execute(
+                "INSERT INTO case_notes (at, examiner, body, replaces) "
+                "VALUES (?,?,?,?)", (utcnow(), self.examiner, body, nid))
         self.log("note.edit", {"id": cur.lastrowid, "replaces": nid,
-                               "body": body[:self.NOTE_MAX]})
+                               "body": body})
         return cur.lastrowid
 
     @_writes
     def retract_note(self, nid):
-        if self._current_note(nid) is None:
-            return False
-        self.db.execute(
-            "UPDATE case_notes SET retracted_at=?, retracted_by=? WHERE id=?",
-            (utcnow(), self.examiner, nid))
-        self.db.commit()
+        with self._write_lock():
+            if self._current_note(nid) is None:
+                return False
+            self.db.execute(
+                "UPDATE case_notes SET retracted_at=?, retracted_by=? "
+                "WHERE id=?", (utcnow(), self.examiner, nid))
         self.log("note.retract", {"id": nid})
         return True
 
@@ -1441,14 +1514,16 @@ class Case:
         self.db.commit()
 
     @_writes
-    def reassociate_tags(self, evidence_id, identities):
+    def reassociate_tags(self, evidence_id, identities, skip=()):
         """Move tags of previously seen volumes onto this acquisition.
 
         For each identity key of the incoming evidence, if exactly one other
         evidence item held that key, its tagged rows move here (same volume
         means same filesystem layout, so node values travel as-is).  Zero or
         several candidates is reported, never guessed.  Returns the counts
-        and logs audit action "tags.reassociated".
+        and logs audit action "tags.reassociated". Exhibits in `skip` (a
+        disk's parents and siblings) are never a source: they share the
+        volume because they are states of it, not earlier copies.
         """
         counts = {"remapped": 0, "duplicates_dropped": 0, "ambiguous": 0,
                   "unchanged": 0}
@@ -1460,6 +1535,7 @@ class Case:
                 "SELECT DISTINCT evidence_id, part FROM volume_identity "
                 "WHERE key=? AND NOT (evidence_id=? AND part=?)",
                 (key, evidence_id, part)).fetchall()
+            moved_from = [r for r in moved_from if r[0] not in skip]
             if len(moved_from) == 1:
                 src_ev, src_part = moved_from[0]
                 rows = self.db.execute(

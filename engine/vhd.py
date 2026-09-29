@@ -1,6 +1,8 @@
+import array
 import io
 import os
 import struct
+import sys
 import threading
 
 from .text import t as _t
@@ -116,6 +118,16 @@ def parse_sparse_header(hdr):
         "locators": locators,
     }
 
+_TABLE_CODE = next(c for c in "IL" if array.array(c).itemsize == 4)
+
+def _table(raw):
+    """A block allocation table's big-endian entries, four bytes each."""
+    a = array.array(_TABLE_CODE)
+    a.frombytes(raw)
+    if sys.byteorder == "little":
+        a.byteswap()
+    return a
+
 class VhdImage:
     """A VHD disk. A fixed VHD is raw disk data followed by a 512-byte
     Conectix footer. A dynamic VHD stores the disk in blocks found through
@@ -136,6 +148,9 @@ class VhdImage:
 
         file_size = os.path.getsize(path)
         self._file_size = file_size
+        # Everything the disk holds ends where the trailing footer begins;
+        # a read must never return the footer as if it were disk data.
+        self._limit = max(0, file_size - FOOTER_SIZE)
         if file_size < FOOTER_SIZE:
             raise VhdError(_t("vhd.footer_short"))
 
@@ -189,12 +204,14 @@ class VhdImage:
         bs = hdr["block_size"]
         if bs < 512 or bs % 512 or bs > (1 << 28):
             raise VhdError(_t("vhd.block_size_invalid") % bs)
-        n = hdr["max_entries"]
+        # Entries past what the disk's size can address are never used, so a
+        # header claiming more cannot make the table bigger than the disk.
+        n = min(hdr["max_entries"], -(-info["current_size"] // bs))
         raw = (self._file_read(hdr["table_offset"], 4 * n)
                if 4 * n <= file_size else b"")
         if len(raw) < 4 * n:
             raise VhdError(_t("vhd.bat_unreadable"))
-        self._bat = struct.unpack(">%dI" % n, raw)
+        self._bat = _table(raw)
         self._block = bs
         self._bitmap_size = ((bs // 512 + 7) // 8 + 511) // 512 * 512
         self._bitmaps = {}
@@ -244,25 +261,37 @@ class VhdImage:
     def _open_parent(self, hdr):
         if len(self._chain) >= MAX_CHAIN:
             raise VhdError(_t("vhd.parent_chain_too_long") % MAX_CHAIN)
-        tried = []
+        tried = set()
+        problems = []
         for how, candidate in self._parent_candidates(hdr):
+            if candidate in tried:
+                continue
+            tried.add(candidate)
+            name = os.path.basename(candidate)
+            # lstat first: a symlink is not followed, as for a VMDK extent
+            # (a link named like the parent could lead outside this folder).
+            if os.path.islink(candidate):
+                problems.append(_t("vhd.parent_symlink") % name)
+                continue
             # Only a regular file: a locator is written by whoever made the
             # image, and must not lead to a device or a pipe.
-            if candidate in tried or not os.path.isfile(candidate):
-                tried.append(candidate)
+            if not os.path.isfile(candidate):
                 continue
             if os.path.realpath(candidate) in self._chain:
                 raise VhdError(_t("vhd.parent_loop") % candidate)
-            parent = VhdImage(candidate, self._chain)
+            try:
+                parent = VhdImage(candidate, self._chain)
+            except (VhdError, OSError) as exc:
+                # Say which file, and go on: another name the disk records
+                # may be the right one.
+                problems.append(_t("vhd.parent_open_failed") % (
+                    name, getattr(exc, "message", None) or str(exc)))
+                continue
             if parent.unique_id != hdr["parent_id"]:
                 parent.close()
-                raise VhdError(
-                    _t("vhd.parent_mismatch") % (
-                        os.path.basename(candidate), parent.unique_id,
-                        hdr["parent_id"]),
-                    "A differencing disk is only meaningful over the exact "
-                    "parent it was made from; reading it over another would "
-                    "mix two disks' contents.")
+                problems.append(_t("vhd.parent_mismatch") % (
+                    name, parent.unique_id, hdr["parent_id"]))
+                continue
             self.parent, self.parent_how = parent, how
             self.segment_paths = [self.path] + parent.segment_paths
             if parent.size != self.size:
@@ -271,16 +300,31 @@ class VhdImage:
                     "the parent does not hold read as zeros."
                     % (parent.size, self.size))
             return
+        if problems:
+            raise VhdError(
+                _t("vhd.parent_unusable") % " ".join(problems),
+                "A differencing disk is only meaningful over the exact "
+                "parent it was made from; reading it over another would "
+                "mix two disks' contents.")
         raise VhdError(
             _t("vhd.parent_not_found") % (hdr["parent_name"] or "unnamed"),
             "Put the parent disk in the same folder as this file, under the "
             "name it was created with, and open this file again.")
 
+    def parent_paths(self):
+        """The disks this one reads through, nearest first."""
+        out, p = [], self.parent
+        while p is not None:
+            out.append(p.path)
+            p = p.parent
+        return out
+
     def _file_read(self, offset, length):
         # Offsets come from the image's own headers and tables: one past the
         # end of the file reads as nothing rather than failing the seek.
-        if offset < 0 or length <= 0 or offset >= self._file_size:
+        if offset < 0 or length <= 0 or offset >= self._limit:
             return b""
+        length = min(length, self._limit - offset)
         with self._io_lock:
             self._fh.seek(offset)
             return self._fh.read(length)
@@ -308,11 +352,12 @@ class VhdImage:
         if entry == UNUSED:
             return self._below(disk_off, n)
         base = entry * 512 + self._bitmap_size
-        if base + self._block > self._file_size and blk not in self._bad_blocks:
+        if base + self._block > self._limit and blk not in self._bad_blocks:
             self._bad_blocks.add(blk)
             self.findings.append(
-                "Block %d is recorded at file offset %d, past the end of "
-                "the file; what is missing reads as zeros."
+                "Block %d is recorded at file offset %d and runs past the "
+                "end of the disk data (into the footer, or beyond the file); "
+                "what is missing reads as zeros."
                 % (blk, entry * 512))
         if self.parent is None:
             data = self._file_read(base + within, n)

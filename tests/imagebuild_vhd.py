@@ -36,7 +36,8 @@ def footer(disk_type, size, unique_id, data_offset=0xFFFFFFFFFFFFFFFF):
 
 
 def sparse(size, blocks, block_size=4096, parent=None, locators=(),
-           parent_name="", unique_id=None, corrupt_header=False):
+           parent_name="", unique_id=None, corrupt_header=False,
+           table_entries=None):
     """A dynamic VHD, or a differencing one when `parent` (the parent's
     unique id bytes) is given.
 
@@ -47,6 +48,8 @@ def sparse(size, blocks, block_size=4096, parent=None, locators=(),
     Returns (file bytes, unique id bytes)."""
     unique_id = unique_id or uuid.uuid4().bytes
     n = (size + block_size - 1) // block_size
+    if table_entries is not None:
+        n = table_entries          # what the header declares, however many
     header_at = 512
     table_at = header_at + 1024
     table_len = (4 * n + 511) // 512 * 512
@@ -59,6 +62,7 @@ def sparse(size, blocks, block_size=4096, parent=None, locators=(),
     bitmap_size = ((block_size // 512 + 7) // 8 + 511) // 512 * 512
     bat = [UNUSED] * n
     body = bytearray()
+    blocks = {i: b for i, b in blocks.items() if i < n}
     for idx in sorted(blocks):
         data, present = blocks[idx]
         bat[idx] = (pos + len(body)) // SECTOR

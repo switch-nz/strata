@@ -1717,8 +1717,8 @@ function showPartition(p) {
   if (p === S.image || p.format) {
     const a = S.image.acquisition || {};
     i.innerHTML = `
-      <div class="title">${S.image.segments[0]}</div>
-      <div class="subtitle">${S.image.format}</div>
+      <div class="title">${esc(S.image.segments[0])}</div>
+      <div class="subtitle">${esc(S.image.format)}</div>
       ${kv([
         [txt('ui.kv.size'), fmt.bytes(S.image.size), true],
         [txt('ui.kv.sectors'), (S.image.sector_count || 0).toLocaleString()],
@@ -1728,20 +1728,23 @@ function showPartition(p) {
       ])}
       <h3>${txt('ui.show_partition.acquisition')}</h3>
       ${kv([
-        a.case_number && [txt('ui.kv.case'), a.case_number],
-        a.evidence_number && [txt('ui.kv.evidence'), a.evidence_number],
-        a.examiner && [txt('ui.kv.examiner'), a.examiner],
-        a.acquisition_date && [txt('ui.kv.acquired'), a.acquisition_date],
-        a.acquiry_software && [txt('ui.kv.tool'), a.acquiry_software],
+        a.case_number && [txt('ui.kv.case'), esc(a.case_number)],
+        a.evidence_number && [txt('ui.kv.evidence'), esc(a.evidence_number)],
+        a.examiner && [txt('ui.kv.examiner'), esc(a.examiner)],
+        a.acquisition_date && [txt('ui.kv.acquired'), esc(a.acquisition_date)],
+        a.acquiry_software && [txt('ui.kv.tool'), esc(a.acquiry_software)],
+        a.parent && [txt('ui.kv.parent_disk'), esc(a.parent)],
+        a.parent && a['parent found by']
+          && [txt('ui.kv.parent_found_by'), esc(a['parent found by'])],
       ])}
       <h3>${txt('ui.stored_hashes')}</h3>
       ${kv([
-        [txt('ui.kv.md5'), S.image.stored_md5 || 'not stored'],
-        [txt('ui.kv.sha_1'), S.image.stored_sha1 || 'not stored'],
+        [txt('ui.kv.md5'), esc(S.image.stored_md5 || 'not stored')],
+        [txt('ui.kv.sha_1'), esc(S.image.stored_sha1 || 'not stored')],
       ])}
       ${(S.image.findings || []).length ? `<div class="notice bad">
         <strong>${S.image.findings.length} structural finding(s)</strong><br>
-        ${S.image.findings.slice(0, 6).join('<br>')}</div>` : ''}
+        ${S.image.findings.slice(0, 6).map(esc).join('<br>')}</div>` : ''}
       <div class="actions">
         <button class="ghost" id="btn-verify">${txt('ui.verify_hashes')}</button>
       </div>`;
@@ -8288,6 +8291,8 @@ async function loadNotes() {
   const box = $('#note-results');
   if (!S.casePath) {
     S.notes = [];
+    S.notesCase = null;
+    S.noteEdit = null;
     if (box) box.innerHTML = `<p class="empty">${txt('ui.notes.no_case')}</p>`;
     tabCount('notes', null);
     return;
@@ -8295,7 +8300,16 @@ async function loadNotes() {
   const r = await api.get('notes', {
     retracted: $('#note-show-retracted')?.checked ? 1 : undefined,
   }).catch(() => null);
-  S.notes = (r && r.notes) || [];
+  if (!r || r.error) {
+    // Not "no notes": the case's notes could not be read.
+    S.notes = [];
+    S.notesCase = null;
+    if (box) box.innerHTML = `<p class="empty">${esc(r?.error || '')}</p>`;
+    return;
+  }
+  if ((r.case || null) !== (S.notesCase || null)) S.noteEdit = null;
+  S.notes = r.notes || [];
+  S.notesCase = r.case || null;
   renderNotes();
 }
 
@@ -8339,6 +8353,20 @@ function renderNotes() {
     b.addEventListener('click', () => editNote(+b.dataset.noteEdit)));
   box.querySelectorAll('[data-note-withdraw]').forEach(b =>
     b.addEventListener('click', () => withdrawNote(+b.dataset.noteWithdraw)));
+  // A refresh (a colleague's note arriving, or this examiner's own add)
+  // must not throw away an edit in progress.
+  const open = S.noteEdit;
+  if (open) {
+    const i = S.notes.findIndex(n => n.id === open.id && !n.retracted_at);
+    if (i >= 0) {
+      editNote(i, open.draft);
+    } else {
+      S.noteEdit = null;
+      const box2 = $('#note-body');
+      if (box2 && !box2.value.trim()) box2.value = open.draft;
+      toast(txt('ui.notes.changed_while_editing'));
+    }
+  }
 }
 
 async function noteResult(r) {
@@ -8357,34 +8385,46 @@ async function addNote() {
   const el = $('#note-body');
   const body = (el.value || '').trim();
   if (!body) return el.focus();
-  if (await noteResult(await api.post('note', { body }))) el.value = '';
+  if (await noteResult(await api.post('note', { body, case: S.notesCase }))) {
+    el.value = '';
+  }
 }
 
-function editNote(i) {
+function editNote(i, draft = null) {
   const n = S.notes[i];
   const card = $(`#note-results .note[data-i="${i}"]`);
   if (!n || !card) return;
   const body = card.querySelector(':scope > .note-body');
   const actions = card.querySelector('.note-actions');
+  if (!body || !actions) return;
   const area = document.createElement('textarea');
-  area.rows = Math.min(12, Math.max(3, n.body.split('\n').length + 1));
-  area.value = n.body;
+  area.value = draft ?? n.body;
+  area.rows = Math.min(12, Math.max(3, area.value.split('\n').length + 1));
+  S.noteEdit = { id: n.id, draft: area.value };
+  area.addEventListener('input', () => { S.noteEdit.draft = area.value; });
   body.replaceWith(area);
   actions.innerHTML = `<button class="solid" data-save>${txt('ui.notes.save')}</button>
     <button class="ghost" data-cancel>${txt('ui.notes.cancel')}</button>`;
-  actions.querySelector('[data-cancel]').addEventListener('click', renderNotes);
+  actions.querySelector('[data-cancel]').addEventListener('click', () => {
+    S.noteEdit = null;
+    renderNotes();
+  });
   actions.querySelector('[data-save]').addEventListener('click', async () => {
     const text = area.value.trim();
     if (!text) return area.focus();
-    await noteResult(await api.post('note/edit', { id: n.id, body: text }));
+    const r = await api.post('note/edit',
+                             { id: n.id, body: text, case: S.notesCase });
+    if (r && !r.error) S.noteEdit = null;
+    await noteResult(r);
   });
-  area.focus();
+  if (draft === null) area.focus();
 }
 
 async function withdrawNote(i) {
   const n = S.notes[i];
   if (!n || !window.confirm(txt('ui.notes.confirm_withdraw'))) return;
-  await noteResult(await api.post('note/retract', { id: n.id }));
+  await noteResult(await api.post('note/retract',
+                                  { id: n.id, case: S.notesCase }));
 }
 
 $('#btn-note-add')?.addEventListener('click', addNote);
@@ -8505,6 +8545,8 @@ function applyEmptyCase(r) {
     + 'audit trail are still here.</p>';
   previewNone(txt('messages.case_evidence_yet'));
   setEmptyScope(caseFile || r.case?.name || txt('ui.cases.no_case'), null);
+  S.noteEdit = null;
+  loadNotes();
 }
 
 function examinerName() {
@@ -8827,6 +8869,7 @@ function toast(msg, channel = 'problem') {
 
 const OPEN_STAGES = [
   ['bookmarks…', () => loadMarks()],
+  [txt('ui.app.notes'), () => loadNotes()],
   [txt('ui.tagged_items_2'), () => loadTags()],
   [txt('ui.saved_searches_2'), () => loadSavedSearches()],
   [txt('ui.hash_sets'), () => loadHashSets()],
@@ -9497,7 +9540,7 @@ let lastPulse = null;
 
 function markPulse(p) {
   if (p) lastPulse = { bookmarks: p.bookmarks, tags: p.tags, notes: p.notes,
-                       audit: p.audit };
+                       notes_rev: p.notes_rev, audit: p.audit };
 }
 
 async function pulse() {
@@ -9507,7 +9550,7 @@ async function pulse() {
   const changed = !lastPulse
     || p.bookmarks !== lastPulse.bookmarks
     || p.tags !== lastPulse.tags
-    || p.notes !== lastPulse.notes
+    || p.notes_rev !== lastPulse.notes_rev
     || p.audit !== lastPulse.audit;
   if (!changed) return;
 
@@ -9515,7 +9558,7 @@ async function pulse() {
   const added = first ? 0
     : (p.bookmarks - lastPulse.bookmarks) + (p.tags - lastPulse.tags)
       + (p.notes - lastPulse.notes);
-  const notesChanged = !first && p.notes !== lastPulse.notes;
+  const notesChanged = !first && p.notes_rev !== lastPulse.notes_rev;
   markPulse(p);
   if (first) return;
 

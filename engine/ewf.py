@@ -729,9 +729,10 @@ UNSUPPORTED = (
     (b"COWD", "VMware COW disk",
      "An older VMware container with its own indirection. Convert it first."),
     (b"conectix", "Virtual PC / Hyper-V disk (VHD)",
-     "This is a VHD footer. A fixed VHD is raw data with the footer "
-     "appended and can be read as raw; a dynamic or differencing one cannot. "
-     "Convert it, or read the fixed variant as raw."),
+     "The file starts with a VHD footer, but no valid footer was found at "
+     "its end, where the format keeps the authoritative one. It is most "
+     "likely a truncated copy of a dynamic or differencing VHD, or damaged "
+     "at the end, so the disk cannot be read. Obtain a complete copy."),
     (b"QFI\xfb", "QEMU copy-on-write (QCOW/QCOW2)",
      "QCOW stores data through an indirection table. Convert with qemu-img."),
     (b"<<< Oracle VM VirtualBox Disk Image >>>", "VirtualBox disk (VDI)",

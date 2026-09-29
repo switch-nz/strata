@@ -2,6 +2,7 @@
 the bundled table, and a volume's logs merge into one timeline."""
 
 import os
+import struct
 import sys
 import unittest
 
@@ -135,6 +136,70 @@ class Sweep(unittest.TestCase):
                 data[i] = rng.getrandbits(8)
             with self.subTest(trial=trial):
                 evtx.sweep([("x.evtx", "/x.evtx", lambda d=bytes(data): d)])
+
+
+
+class OddValues(unittest.TestCase):
+    """Template values can arrive as types the record's neighbours do not
+    use. One such record must not stop a log, or a whole volume's logs,
+    being read."""
+
+    def normal(self, eid=4624, minute=0):
+        return build.template_event(eid, build.filetime(2024, 3, 1, 10, minute))
+
+    def test_a_time_that_is_not_text_does_not_fail_the_sweep(self):
+        odd = build.template_record([
+            (0x06, struct.pack("<H", 4634)), (0x04, bytes([4])),
+            (0x0A, struct.pack("<Q", 123456789))])        # UInt64, not a time
+        good = build.template_log([self.normal(4624, 0), self.normal(4625, 5)])
+        oddlog = build.template_log([self.normal(4624, 1), odd])
+        r = evtx.sweep([("Security.evtx", "/Security.evtx", lambda: good),
+                        ("Odd.evtx", "/Odd.evtx", lambda: oddlog)])
+        self.assertEqual([l.get("error") for l in r["logs"]], [None, None])
+        self.assertEqual(r["total_events"], 4)
+        self.assertTrue(all(isinstance(e["time"], str) for e in r["events"]))
+        times = [e["time"] for e in r["events"]]
+        self.assertEqual(times, sorted(times))
+        # The odd record falls back to when the log wrote it.
+        odd_event = [e for e in r["events"] if str(e["event_id"]) == "4634"]
+        self.assertEqual(len(odd_event), 1)
+        self.assertTrue(odd_event[0]["time"].startswith("2024-03-01T09:"))
+
+    def test_a_provider_that_is_an_array_still_reads_and_has_no_description(self):
+        data = build.template_log([
+            build.template_record([
+                (0x06, struct.pack("<H", 4624)), (0x04, bytes([4])),
+                (0x11, struct.pack("<Q", build.filetime(2024, 3, 1, 10, 0))),
+                (0x81, "A\x00B\x00".encode("utf-16-le"))])],
+            provider=None)
+        r = evtx.parse(data)
+        self.assertEqual(len(r["records"]), 1)
+        self.assertEqual(r["records"][0]["event_id"], 4624)
+        self.assertIsNone(r["records"][0]["description"])
+        self.assertIsNone(eventids.describe(["A", "B"], 4624))
+        self.assertIsNone(eventids.describe(None, 4624))
+
+    def test_a_level_that_only_looks_like_a_digit_reads_as_written(self):
+        data = build.template_log([build.template_record([
+            (0x06, struct.pack("<H", 4624)),
+            (0x01, "\u00b2".encode("utf-16-le")),        # superscript two
+            (0x11, struct.pack("<Q", build.filetime(2024, 3, 1, 10, 0)))])])
+        r = evtx.parse(data)
+        self.assertEqual(r["records"][0]["level"], "\u00b2")
+
+    def test_a_log_over_the_read_limit_says_records_are_missing(self):
+        old = evtx.LOG_READ_MAX
+        evtx.LOG_READ_MAX = 1000
+        self.addCleanup(setattr, evtx, "LOG_READ_MAX", old)
+        good = build.template_log([self.normal()])
+        r = evtx.sweep([("Big.evtx", "/Big.evtx", lambda: good, 5000),
+                        ("Small.evtx", "/Small.evtx", lambda: good, 900)])
+        big, small = r["logs"]
+        self.assertTrue(big["partial"])
+        self.assertTrue(any("only the first 1000" in f
+                            for f in big["findings"]))
+        self.assertFalse(small.get("partial"))
+        self.assertEqual(small["findings"], [])
 
 
 if __name__ == "__main__":

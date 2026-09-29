@@ -101,5 +101,77 @@ class CaseNotes(unittest.TestCase):
         self.assertIn("Case notes", html)
 
 
+    def test_withdrawal_and_edit_change_the_pulse_revision(self):
+        nid = self.alice.add_note("a")
+        p0 = self.alice.pulse()
+        self.other("Bob").edit_note(nid, "b")
+        p1 = self.alice.pulse()
+        # An edit is a new version, not a new item.
+        self.assertEqual(p1["notes"], p0["notes"])
+        self.assertNotEqual(p1["notes_rev"], p0["notes_rev"])
+        self.other("Bob").retract_note(nid + 1)
+        p2 = self.alice.pulse()
+        self.assertNotEqual(p2["notes_rev"], p1["notes_rev"])
+
+    def test_overlong_note_is_refused_not_cut(self):
+        with self.assertRaises(ValueError):
+            self.alice.add_note("x" * (Case.NOTE_MAX + 1))
+        nid = self.alice.add_note("short")
+        with self.assertRaises(ValueError):
+            self.alice.edit_note(nid, "y" * (Case.NOTE_MAX + 1))
+        self.assertEqual(self.alice.notes()[0]["body"], "short")
+
+    def test_report_dates_the_current_version_and_keeps_line_breaks(self):
+        nid = self.alice.add_note("line one\nline two")
+        self.other("Bob").edit_note(nid, "replaced")
+        html = report.render(self.alice.report())
+        self.assertIn("This version by Bob", html)
+        self.assertIn('<div class="pre note">line one\nline two</div>', html)
+
+
+RACER = r"""
+import sys, time
+sys.path.insert(0, sys.argv[1])
+from engine import casedb
+path, who, nid, go = sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]
+orig = casedb.Case._current_note
+def slow(self, n):
+    row = orig(self, n)
+    time.sleep(0.5)      # widen the gap between the check and the write
+    return row
+casedb.Case._current_note = slow
+c = casedb.Case(path, examiner=who)
+while not __import__("os").path.exists(go):
+    time.sleep(0.01)
+print(c.edit_note(nid, who + "'s version"))
+c.close()
+"""
+
+
+class ConcurrentEditors(unittest.TestCase):
+    """Two Strata processes editing one note: only one edit may win."""
+
+    def test_two_processes_cannot_fork_a_note(self):
+        import subprocess
+        d = tempfile.mkdtemp(prefix="strata-notes-mp-")
+        self.addCleanup(lambda: shutil.rmtree(d, ignore_errors=True))
+        path = os.path.join(d, "case")
+        c = Case(path, name="t", examiner="setup")
+        nid = c.add_note("original")
+        c.close()
+        go = os.path.join(d, "go")
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        procs = [subprocess.Popen([sys.executable, "-c", RACER, root, path,
+                                   who, str(nid), go],
+                                  stdout=subprocess.PIPE, text=True)
+                 for who in ("Alice", "Bob")]
+        open(go, "w").close()
+        outs = [p.communicate(timeout=60)[0].strip() for p in procs]
+        self.assertEqual(sorted(o == "None" for o in outs), [False, True])
+        c = Case(path)
+        self.addCleanup(c.close)
+        self.assertEqual(len(c.notes()), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
