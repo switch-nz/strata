@@ -25,13 +25,15 @@ from engine.ewf import RawImage                                   # noqa: E402
 from test_fs_fat import BytesImage                                # noqa: E402
 
 
-def acquire(case, img_path):
+def acquire(case, img_path, parents=()):
     """The part of Session._open this feature adds, driven directly."""
     img = RawImage(img_path)
     found = volume.identities(img, volume.scan(img))
-    ev_id = case.add_evidence(img_path, {"kind": "image", "size": img.size})
+    ev_id = case.add_evidence(img_path, {"kind": "image", "size": img.size},
+                              parents=list(parents))
     case.register_volumes(ev_id, found)
-    counts = case.reassociate_tags(ev_id, found)
+    counts = case.reassociate_tags(
+        ev_id, found, skip=case.related_evidence(img_path, parents))
     return ev_id, counts
 
 
@@ -94,6 +96,71 @@ class Reassociation(unittest.TestCase):
         self.assertEqual(rows[0]["part"], 1048576)
         self.assertEqual(rows[0]["node"], "16")
         self.assertEqual(rows[0]["tag"], "Evidence")
+
+    def test_tags_stay_with_a_parent_disk_when_its_child_is_added(self):
+        # A differencing disk shows the same NTFS volume as its parent, but
+        # as a later state of it: the parent is still an exhibit, and its
+        # tags are not moved onto the child.
+        base = self._write("base.vhd", self.ntfs)
+        child = self._write("child.vhd", self.ntfs)
+        ev_parent, _ = acquire(self.case, base)
+        self._tag_hello(ev_parent)
+        ev_child, counts = acquire(self.case, child, parents=[base])
+        self.assertEqual(len(self.case.tagged(ev_parent)), 1)
+        self.assertEqual(self.case.tagged(ev_child), [])
+        self.assertEqual(counts["remapped"], 0)
+
+    def test_tags_stay_with_a_child_disk_when_its_parent_is_added_later(self):
+        base = self._write("base.vhd", self.ntfs)
+        child = self._write("child.vhd", self.ntfs)
+        ev_child, _ = acquire(self.case, child, parents=[base])
+        self._tag_hello(ev_child)
+        ev_parent, counts = acquire(self.case, base)
+        self.assertEqual(len(self.case.tagged(ev_child)), 1)
+        self.assertEqual(self.case.tagged(ev_parent), [])
+        self.assertEqual(counts["remapped"], 0)
+
+    def test_tags_stay_between_children_of_one_parent(self):
+        base = self._write("base.vhd", self.ntfs)
+        one = self._write("one.vhd", self.ntfs)
+        two = self._write("two.vhd", self.ntfs)
+        ev1, _ = acquire(self.case, one, parents=[base])
+        self._tag_hello(ev1)
+        ev2, counts = acquire(self.case, two, parents=[base])
+        self.assertEqual(len(self.case.tagged(ev1)), 1)
+        self.assertEqual(self.case.tagged(ev2), [])
+
+    def test_an_unrelated_reacquisition_still_moves_tags(self):
+        base = self._write("base.vhd", self.ntfs)
+        child = self._write("child.vhd", self.ntfs)
+        ev_child, _ = acquire(self.case, child, parents=[base])
+        self._tag_hello(ev_child)
+        again = self._write("again.img", self.ntfs)
+        ev_again, counts = acquire(self.case, again)
+        self.assertEqual(counts["remapped"], 1)
+        self.assertEqual(len(self.case.tagged(ev_again)), 1)
+
+    def test_the_parent_chain_is_recorded_with_the_exhibit(self):
+        base = self._write("base.vhd", self.ntfs)
+        child = self._write("child.vhd", self.ntfs)
+        ev, _ = acquire(self.case, child, parents=[base])
+        row = self.case.db.execute("SELECT parents FROM evidence WHERE id=?",
+                                   (ev,)).fetchone()
+        self.assertEqual(__import__("json").loads(row["parents"]), [base])
+        add = [r for r in self.case.audit(limit=100)
+               if r["action"] == "evidence.add"][0]
+        detail = add["detail"] if isinstance(add["detail"], dict) \
+            else __import__("json").loads(add["detail"])
+        self.assertEqual(detail["parents"], [base])
+
+    def test_a_case_from_before_the_chain_was_recorded_is_migrated(self):
+        self.case.db.execute("ALTER TABLE evidence DROP COLUMN parents")
+        self.case.db.commit()
+        self.case.close()
+        again = Case(os.path.join(self._dir, "case"), examiner="tester")
+        self.addCleanup(again.close)
+        cols = {r[1] for r in again.db.execute("PRAGMA table_info(evidence)")}
+        self.assertIn("parents", cols)
 
     def test_ambiguous_volume_leaves_tags_and_reports(self):
         # Two prior evidences, each holding the same volume key.  They must

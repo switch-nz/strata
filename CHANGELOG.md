@@ -13,6 +13,35 @@ records, not how the code changed.
 
 ### Fixed
 
+- **A differencing VHD could read its parent from any file on the machine.**
+  A disk records where its parent lives, and that path was followed. Only the
+  file name it records is used now, and only in the disk's own folder, so a
+  crafted disk cannot make Strata open other files. A symbolic link named
+  like the parent is not followed either, and the refusal says so.
+- **A differencing VHD's refusal did not say which file was at fault, and a
+  wrong file could hide the right one.** A damaged or wrong parent was
+  reported as if the child were damaged; and if one recorded name led to the
+  wrong disk, the correct parent recorded elsewhere in the same disk was never
+  tried. Every recorded name is now tried, and a refusal names each file it
+  rejected and why.
+- **A dynamic VHD read its own footer as disk data when a block ran into
+  it**, and said nothing if a block ended exactly at the file's end. Reads
+  now stop where the footer begins, and a block that would run past that
+  point is reported.
+- **A crafted VHD could use about eleven times its own size in memory just by
+  being opened.** The block table is now stored compactly and read only as far
+  as the disk's size needs.
+- **Adding a differencing VHD to a case that held its parent moved the
+  parent's tags onto the child.** The two show the same volume, but as
+  different states of it, and the parent is still an exhibit. Tags now stay
+  where they are between a disk, its parents and its other children; tags
+  still follow a volume that is re-acquired as an unrelated image.
+- **A case did not record which parent files a differencing VHD was read
+  through.** They are now stored with the exhibit and written to the audit
+  log when it is added and when it is opened.
+- **The refusal for a VHD whose end of file is missing gave outdated advice**
+  ("convert it"). It now says the file is probably truncated or damaged at
+  the end and asks for a complete copy.
 - **One odd event record could stop a whole volume's event logs being
   merged.** A record whose time was stored as something other than a
   timestamp made the merge fail for every log on the volume. Such a record

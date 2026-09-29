@@ -449,18 +449,25 @@ class Session:
             if not add:
                 self.items = {}
                 self.active_id = None
-        ev_id = self.case.add_evidence(path, img.info())
+        # A differencing disk reads through its parents; which files those
+        # were is part of what the exhibit is.
+        parents_of = getattr(img, "parent_paths", None)
+        parents = parents_of() if callable(parents_of) else []
+        ev_id = self.case.add_evidence(path, img.info(), parents=parents)
         item = Evidence(path, ev_id, image=img)
         self.items[ev_id] = item
         self.active_id = ev_id
         self.case.log("evidence.open", {"path": path, "evidence_id": ev_id,
                                         "alongside": len(self.items) - 1,
+                                        "parents": parents or None,
                                         "tool": version_mod.label()})
         if self.case is not None:
             try:
                 found = volume_mod.identities(img, item.volumes)
                 self.case.register_volumes(ev_id, found)
-                self.case.reassociate_tags(ev_id, found)
+                self.case.reassociate_tags(
+                    ev_id, found,
+                    skip=self.case.related_evidence(path, parents))
             except Exception as exc:
                 # Identity extraction or remap errors must never turn an
                 # open into a failure; the audit chain records the miss.
