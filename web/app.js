@@ -3397,15 +3397,22 @@ function tzLabel(mins) {
     String(Math.abs(mins) % 60).padStart(2, '0')}`;
 }
 
-async function loadTimezone(prompt = false) {
+// The zone already applied to the case, if any. Loading it never starts a
+// detection, so a page reload can restore it cheaply.
+async function loadAppliedTimezone() {
   let r;
-  try { r = await api.get('timezone'); } catch { return; }
+  try { r = await api.get('timezone'); } catch { return null; }
   if (r.applied) {
     S.tz = { ...r.applied, label: tzLabel(r.applied.offset_minutes) };
   }
   S.tzCandidates = r.candidates || [];
   renderTzStat();
-  if (r.applied) return;
+  return r;
+}
+
+async function loadTimezone(prompt = false) {
+  const r = await loadAppliedTimezone();
+  if (!r || r.applied) return;
 
   if (!r.detected) {
     const t = await api.post('timezone/detect', {});
@@ -10311,6 +10318,7 @@ $$('.modules .tab').forEach(tab =>
   if (st.open) {
     applyOpened(st);
     if (p.split_hex) toggleSplit(true);
+    await loadAppliedTimezone();
     await loadMarks();
     await loadTags();
     await loadNotes();

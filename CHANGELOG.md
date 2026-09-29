@@ -13,6 +13,11 @@ records, not how the code changed.
 
 ### Fixed
 
+- **After reloading the page, every date fell back to UTC.** The time zone
+  applied to a case was only loaded when a case or image was opened, not when
+  the page was refreshed with one already open, so dates showed UTC (and
+  notes disagreed with the report) until the zone was applied again. The
+  applied zone is now restored on reload.
 - **Case note times ignored the case's time zone and the time-display
   setting.** Notes always showed UTC, while every other date in the interface
   and the HTML report showed the applied zone, so one note could carry two
