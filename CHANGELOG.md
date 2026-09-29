@@ -13,6 +13,14 @@ records, not how the code changed.
 
 ### Fixed
 
+- **Events from deleted event logs were merged among the live ones with
+  nothing to tell them apart.** The volume-wide Events timeline also read
+  `.evtx` files that had been deleted, whose clusters may have been reused
+  since, so an event could come from data that is not what the log once
+  held. Those logs and each of their events are now marked "deleted", a note
+  says why they need care, the log filter labels them, and a checkbox hides
+  them. An unreadable deleted file says it is deleted, and a live log is
+  listed before a deleted one at the same path.
 - **A differencing VHD could show a stale file listing after its parent was
   replaced.** The saved listing of an NTFS volume was checked against the
   child disk's size and time only, but a differencing disk shows mostly what

@@ -202,5 +202,127 @@ class OddValues(unittest.TestCase):
         self.assertEqual(small["findings"], [])
 
 
+
+class DeletedLogs(unittest.TestCase):
+    """A log that is a deleted file may since have had its clusters reused;
+    its events are marked, not silently merged among the live ones."""
+
+    def test_events_from_a_deleted_log_are_marked_and_live_ones_are_not(self):
+        live = security_log()
+        gone = build.build_log([build.event(
+            4624, SEC, "2024-03-01T12:00:00.000Z",
+            data={"LogonType": 2, "TargetUserName": "carol"})])
+        r = evtx.sweep([
+            ("Security.evtx", "/Logs/Security.evtx", lambda: live, None, False),
+            ("Old.evtx", "/Logs/Old.evtx", lambda: gone, None, True)])
+        live_row, gone_row = r["logs"]
+        self.assertFalse(live_row["deleted"])
+        self.assertTrue(gone_row["deleted"])
+        by_log = {}
+        for e in r["events"]:
+            by_log.setdefault(e["log"], set()).add(e["deleted"])
+        self.assertEqual(by_log, {0: {False}, 1: {True}})
+
+    def test_a_deleted_log_that_no_longer_parses_says_it_is_deleted(self):
+        r = evtx.sweep([("Security.evtx", "/Logs/Security.evtx",
+                         lambda: b"PK\x03\x04" * 50, 200, True)])
+        row = r["logs"][0]
+        self.assertTrue(row["deleted"])
+        self.assertIn("not an event log", row["error"])
+
+    def test_logs_without_the_flag_are_live(self):
+        r = evtx.sweep([("A.evtx", "/A.evtx", security_log)])
+        self.assertFalse(r["logs"][0]["deleted"])
+        self.assertTrue(all(e["deleted"] is False for e in r["events"]))
+
+
+class SweepRoute(unittest.TestCase):
+    """The volume-wide route passes each entry's deleted flag through."""
+
+    def test_the_route_marks_deleted_entries(self):
+        import http.client
+        import json
+        import shutil
+        import socket
+        import tempfile
+        import threading
+        import time
+        from unittest import mock
+        import imagebuild_fat
+        from engine import server
+
+        d = tempfile.mkdtemp(prefix="strata-evtx-route-")
+        self.addCleanup(lambda: shutil.rmtree(d, ignore_errors=True))
+        img = os.path.join(d, "disk.img")
+        with open(img, "wb") as fh:
+            fh.write(imagebuild_fat.build_fat(16))
+        logs = {"Security.evtx": security_log(), "Old.evtx": system_log()}
+
+        class Fs:
+            name = "FAT"
+            root_node = 0
+
+            def listdir(self, node, path):
+                return [{"name": n, "path": "/" + n, "is_dir": False,
+                         "size": len(b), "start_cluster": i + 2,
+                         "deleted": n == "Old.evtx"}
+                        for i, (n, b) in enumerate(sorted(logs.items()))]
+
+            def read_file(self, entry, max_bytes=None):
+                return logs[entry["name"]][:max_bytes]
+
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        ready = threading.Event()
+        threading.Thread(target=server.serve, daemon=True, kwargs={
+            "host": "127.0.0.1", "port": port,
+            "on_ready": lambda h, p: ready.set()}).start()
+        ready.wait(10)
+
+        cookie = []
+
+        def call(method, path, body=None):
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
+            host = "127.0.0.1:%d" % port
+            h = {"Content-Type": "application/json", "Host": host,
+                 "Origin": "http://" + host}
+            if cookie:
+                h["Cookie"] = cookie[0]
+            c.request(method, path, json.dumps(body) if body is not None
+                      else None, h)
+            r = c.getresponse()
+            data = r.read()
+            if r.getheader("Set-Cookie"):
+                cookie[:] = [r.getheader("Set-Cookie").split(";")[0]]
+            c.close()
+            if "json" in (r.getheader("Content-Type") or ""):
+                return json.loads(data)
+            return None
+
+        call("GET", "/")
+        with mock.patch.object(server.Session, "fs",
+                               lambda self, part, **kw: Fs()):
+            opened = call("POST", "/api/open", {
+                "path": img, "case_path": os.path.join(d, "case"),
+                "examiner": "T"})
+            self.assertTrue(opened["open"], opened)
+            task = call("POST", "/api/evtx", {"part": 0})
+            for _ in range(200):
+                t = call("GET", "/api/task?id=" + task["id"])
+                if t.get("state") != "running":
+                    break
+                time.sleep(0.05)
+        self.assertEqual(t["state"], "done", t)
+        rows = {r["name"]: r for r in t["result"]["logs"]}
+        self.assertFalse(rows["Security.evtx"]["deleted"])
+        self.assertTrue(rows["Old.evtx"]["deleted"])
+        self.assertEqual(
+            {e["deleted"] for e in t["result"]["events"]
+             if e["log"] == [r["name"] for r in t["result"]["logs"]]
+             .index("Old.evtx")}, {True})
+
+
 if __name__ == "__main__":
     unittest.main()

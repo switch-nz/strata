@@ -2891,11 +2891,13 @@ class Handler(BaseHTTPRequestHandler):
                              if not e.get("is_dir") and (e.get("size") or 0)
                              and (e.get("name") or "").lower()
                              .endswith(".evtx")]
-                    found.sort(key=lambda e: (e.get("path") or "").lower())
+                    # A live log sorts before a deleted one of the same path.
+                    found.sort(key=lambda e: ((e.get("path") or "").lower(),
+                                              bool(e.get("deleted"))))
                     logs = [(e.get("name"), e.get("path"),
                              (lambda e=e: fs.read_file(
                                  e, evtx_mod.LOG_READ_MAX)),
-                             e.get("size"))
+                             e.get("size"), bool(e.get("deleted")))
                             for e in found]
                     r = evtx_mod.sweep(logs, progress=progress)
                     for row, e in zip(r["logs"], found):

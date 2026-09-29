@@ -526,17 +526,22 @@ LOG_READ_MAX = 256 << 20
 
 def sweep(logs, progress=None, max_events=SWEEP_MAX_EVENTS):
     """Every record in several event logs from one volume, merged into one
-    timeline. `logs` is [(name, source path, read())]; read() returns the
-    file's bytes. Returns per-log summaries and the events, oldest first;
-    past max_events only the newest are kept, and the result says so."""
+    timeline. `logs` is [(name, source path, read(), size, deleted)], the
+    last two optional; read() returns the file's bytes. A log that is a
+    deleted file is marked so, and so is every event read from it: its
+    clusters may have been reused since. Returns per-log summaries and the
+    events, oldest first; past max_events only the newest are kept, and the
+    result says so."""
     summaries, events = [], []
     total = max(1, len(logs))
     for i, item in enumerate(logs):
         name, source, read = item[:3]
         size = item[3] if len(item) > 3 else None
+        deleted = bool(item[4]) if len(item) > 4 else False
         if progress:
             progress(i / total)
-        row = {"name": name, "source": source, "records": 0}
+        row = {"name": name, "source": source, "records": 0,
+               "deleted": deleted}
         summaries.append(row)
         try:
             r = parse(read())
@@ -576,6 +581,7 @@ def sweep(logs, progress=None, max_events=SWEEP_MAX_EVENTS):
                 "computer": x.get("computer"),
                 "description": x.get("description"),
                 "undecoded": bool(x.get("unsupported")),
+                "deleted": deleted,
             })
         if times:
             row["first"], row["last"] = min(times), max(times)
