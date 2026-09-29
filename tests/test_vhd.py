@@ -201,7 +201,10 @@ class DifferencingVhd(VhdCase):
     def test_info_names_the_parent_and_how_it_was_found(self):
         info = self.child().info()
         self.assertEqual(info["segments"], ["child.vhd", "base.vhd"])
-        self.assertEqual(info["acquisition"]["parent"], self.parent_path)
+        # Resolved on both sides: a temp directory can sit behind a symlink
+        # (macOS keeps /var/folders under /private/var).
+        self.assertEqual(os.path.realpath(info["acquisition"]["parent"]),
+                         os.path.realpath(self.parent_path))
         self.assertEqual(info["acquisition"]["parent found by"],
                          "parent name in the disk's header, beside this file")
 
