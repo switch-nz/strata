@@ -13,6 +13,13 @@ records, not how the code changed.
 
 ### Fixed
 
+- **A differencing VHD could show a stale file listing after its parent was
+  replaced.** The saved listing of an NTFS volume was checked against the
+  child disk's size and time only, but a differencing disk shows mostly what
+  its parent holds. Replacing the parent with another disk of the same
+  identifier left the old listing in place. Each parent's size and time are
+  now part of the check, so a changed or missing parent rebuilds the listing;
+  disks without a parent are checked exactly as before.
 - **After reloading the page, every date fell back to UTC.** The time zone
   applied to a case was only loaded when a case or image was opened, not when
   the page was refreshed with one already open, so dates showed UTC (and

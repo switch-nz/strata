@@ -711,7 +711,10 @@ class Session:
         if not cache:
             return
         path = treecache_mod.path_for(cache, ev.path, offset, snap=snap)
-        want = treecache_mod.stamp(ev.path, offset, snap=snap)
+        parents_of = getattr(ev.image, "parent_paths", None)
+        want = treecache_mod.stamp(
+            ev.path, offset, snap=snap,
+            parents=parents_of() if callable(parents_of) else ())
         fs.tree_store = (lambda: treecache_mod.load(path, want),
                          lambda tree: treecache_mod.save(path, tree, want))
 
