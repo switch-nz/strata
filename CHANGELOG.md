@@ -13,6 +13,11 @@ records, not how the code changed.
 
 ### Fixed
 
+- **Case note times ignored the case's time zone and the time-display
+  setting.** Notes always showed UTC, while every other date in the interface
+  and the HTML report showed the applied zone, so one note could carry two
+  different times. Notes now use the same display as everything else, and
+  switch when the zone or the setting changes.
 - **Text from an image was shown unescaped in the exhibit details, so a
   crafted name could run script in Strata.** The exhibit's name, format,
   acquisition fields (case and evidence numbers, examiner, tool), stored

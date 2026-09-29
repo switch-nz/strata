@@ -996,6 +996,7 @@ function offsetBase() {
 function setTimeDisplay(mode) {
   timeDisplay = ['utc', 'local'].includes(mode) ? mode : 'both';
   savePref('time_display', timeDisplay);
+  renderNotes();
   if (dirView.entries.length) renderDirView();
   if (inspecting && inspecting.entry) {
     showEntry(inspecting.entry, inspecting.part, inspecting.from,
@@ -3417,6 +3418,7 @@ async function loadTimezone(prompt = false) {
 }
 
 function renderTzStat() {
+  renderNotes();
   const el = $('#stat-tz');
   if (!el) return;
   if (!S.tz) {
@@ -8285,7 +8287,9 @@ async function loadMarks() {
 // Case notes: each version names who wrote it. An edit is a new version and
 // a withdrawal is a flag; nothing is changed in place, so the record keeps
 // what was said, by whom, and when.
-const noteTime = t => (t ? t.replace('T', ' ').replace('Z', ' UTC') : '—');
+// The same formatter as every other timestamp, so notes follow the case's
+// time zone and the UTC / local / both setting, as the report does.
+const noteTime = t => fmt.time(t);
 
 async function loadNotes() {
   const box = $('#note-results');
