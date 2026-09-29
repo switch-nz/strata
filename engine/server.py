@@ -2884,7 +2884,8 @@ class Handler(BaseHTTPRequestHandler):
                     found.sort(key=lambda e: (e.get("path") or "").lower())
                     logs = [(e.get("name"), e.get("path"),
                              (lambda e=e: fs.read_file(
-                                 e, evtx_mod.LOG_READ_MAX)))
+                                 e, evtx_mod.LOG_READ_MAX)),
+                             e.get("size"))
                             for e in found]
                     r = evtx_mod.sweep(logs, progress=progress)
                     for row, e in zip(r["logs"], found):

@@ -13,6 +13,21 @@ records, not how the code changed.
 
 ### Fixed
 
+- **One odd event record could stop a whole volume's event logs being
+  merged.** A record whose time was stored as something other than a
+  timestamp made the merge fail for every log on the volume. Such a record
+  now takes the time its log wrote it, and the rest are unaffected.
+- **A single unusual event record made a whole log unreadable.** A provider
+  name stored as a list, or a level written as a character that only looks
+  like a digit, failed the entire log in both the log viewer and the volume
+  timeline, though logs with such records opened before this version. They
+  now read, with no description for an event whose provider is not a name.
+- **An event log larger than 256 MiB was read only in part, without saying
+  so.** Records past that point were missing from the volume timeline. The
+  log's summary now says how much was read and that later records are not
+  included.
+- **The Events tab said "oldest first" above a list that shows the newest
+  first.** The heading now says which.
 - **Opening another case could leave the Notes panel showing the previous
   case's notes, and Withdraw or Edit then changed a different note in the new
   case.** Notes are now reloaded whenever a case or image is opened, and every

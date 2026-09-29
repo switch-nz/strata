@@ -839,7 +839,7 @@
   "tree.crypto": "Crypto",
   "tree.events": "Events",
   "events.none": "No event logs with records on this volume.",
-  "events.summary": "{events} events from {logs} logs, oldest first",
+  "events.summary": "{events} events from {logs} logs, newest first",
   "events.truncated": "{total} events in all; only the newest {kept} are kept here.",
   "events.filter": "Filter: event ID, provider, description or computer",
   "events.all_logs": "All logs",

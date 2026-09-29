@@ -391,8 +391,11 @@ def _summarise(flat):
         return None
 
     level = pick("System/Level")
-    if isinstance(level, str) and level.strip().isdigit():
-        level = int(level)
+    if isinstance(level, str):
+        try:
+            level = int(level.strip())
+        except ValueError:
+            pass            # not a number: shown as written
     return {
         "event_id": pick("System/EventID"),
         "level": LEVELS.get(level, level) if isinstance(level, int) else level,
@@ -528,7 +531,9 @@ def sweep(logs, progress=None, max_events=SWEEP_MAX_EVENTS):
     past max_events only the newest are kept, and the result says so."""
     summaries, events = [], []
     total = max(1, len(logs))
-    for i, (name, source, read) in enumerate(logs):
+    for i, item in enumerate(logs):
+        name, source, read = item[:3]
+        size = item[3] if len(item) > 3 else None
         if progress:
             progress(i / total)
         row = {"name": name, "source": source, "records": 0}
@@ -543,11 +548,22 @@ def sweep(logs, progress=None, max_events=SWEEP_MAX_EVENTS):
             continue
         recs = r["records"]
         row["records"] = len(recs)
-        row["findings"] = r.get("findings") or []
+        row["findings"] = list(r.get("findings") or [])
+        if size and size > LOG_READ_MAX:
+            row["partial"] = True
+            row["findings"].append(
+                "This log is %d bytes; only the first %d were read, so "
+                "records after that point are not in the timeline."
+                % (size, LOG_READ_MAX))
         row["dirty"] = bool((r.get("header") or {}).get("dirty"))
         times = []
         for x in recs:
-            when = x.get("created") or x.get("written_at")
+            # A time is text. One that a substitution decoded to something
+            # else falls back to the record's own write time, so a single
+            # odd record cannot stop the logs being merged and sorted.
+            when = x.get("created")
+            if not isinstance(when, str) or not when:
+                when = x.get("written_at")
             if when:
                 times.append(when)
             if not row.get("channel") and x.get("channel"):
