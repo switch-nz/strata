@@ -2566,6 +2566,7 @@ const dirView = {
   entries: [], name: '', part: null, id: undefined,
   self: null,
   trail: [],
+  columnsOpen: false,
 };
 
 function resetDirView() {
@@ -2580,6 +2581,7 @@ function resetDirView() {
   dirView.id = undefined;
   dirView.self = null;
   dirView.trail = [];
+  dirView.columnsOpen = false;
   dirView.recursive = false;
   dirView.rootPath = null;
   dirView.truncated = false;
@@ -2742,6 +2744,135 @@ async function listAllBelow(part, e = null) {
                      truncated: r.truncated, budget: r.budget });
 }
 
+// The columns of the folder listing, after the name. The case decides which
+// are shown and in what order (see loadCasePrefs); "path" only has a place in
+// a listing of everything below a folder.
+const FOLDER_COL_IDS = ['path', 'size', 'extension', 'signature', 'created',
+                        'modified', 'accessed', 'md5', 'sha'];
+
+const FOLDER_COLS = {
+  path: {
+    label: () => txt('ui.col.path'),
+    head: th => th('path', txt('ui.col.path'), 'c-path', txt('ui.dir.title_path')),
+    cell: e => `<td class="c-path" title="${esc(e.path || '')}">${
+      esc(folderOf(e))}</td>`,
+  },
+  size: {
+    label: () => txt('ui.kv.size'),
+    head: th => th('size', txt('ui.kv.size')),
+    cell: e => `<td class="sz">${e.is_dir ? '—' : fmt.bytes(e.size)}</td>`,
+  },
+  extension: {
+    label: () => txt('ui.render_dir_view.extension'),
+    head: () => `<th class="c-ty" title="${txt('ui.dir.title_extension')}">${
+      txt('ui.render_dir_view.extension')}</th>`,
+    cell: (e, t) => `<td class="ty2 c-ty">${
+      esc(t ? (t.extension_says || '—') : '')}</td>`,
+  },
+  signature: {
+    label: () => txt('ui.render_dir_view.signature'),
+    head: () => `<th class="c-ty" title="${txt('ui.dir.title_signature')}">${
+      txt('ui.render_dir_view.signature')}</th>`,
+    cell: (e, t, bad) => `<td class="ty2 c-ty${bad ? ' bad' : ''}">${
+      esc(t ? (t.content_is
+        || (t.verdict === 'no signature' ? 'no signature' : '—')) : '')}</td>`,
+  },
+  created: {
+    label: () => txt('ui.kv.created'),
+    head: th => th('created', txt('ui.kv.created')),
+    cell: e => `<td class="dt">${fmt.time(e.created)}</td>`,
+  },
+  modified: {
+    label: () => txt('ui.kv.modified'),
+    head: th => th('modified', txt('ui.kv.modified')),
+    cell: e => `<td class="dt">${fmt.time(e.modified)}</td>`,
+  },
+  accessed: {
+    label: () => txt('ui.kv.accessed'),
+    head: th => th('accessed', txt('ui.kv.accessed')),
+    cell: e => `<td class="dt">${fmt.time(e.accessed)}</td>`,
+  },
+  md5: {
+    label: () => txt('ui.render_dir_view.md5'),
+    head: () => `<th class="c-hash" title="${txt('ui.dir.title_md5')}">${
+      txt('ui.render_dir_view.md5')}</th>`,
+    cell: e => `<td class="ty2 mono c-hash" title="${esc(hashOf(e, 'md5') || '')}">${
+      e.is_dir ? '' : (hashOf(e, 'md5')
+        ? esc(hashOf(e, 'md5').slice(0, 12)) + '…' : '')}</td>`,
+  },
+  sha: {
+    label: () => txt('ui.render_dir_view.sha'),
+    head: () => `<th class="c-hash" title="${txt('ui.dir.title_sha256')}">${
+      txt('ui.render_dir_view.sha')}</th>`,
+    cell: e => `<td class="ty2 mono c-hash" title="${esc(hashOf(e) || '')}">${
+      e.is_dir ? '' : (hashOf(e) ? esc(hashOf(e).slice(0, 12)) + '…' : '')}</td>`,
+  },
+};
+
+// Which columns are drawn, in order. null means the case has not chosen.
+function folderColumnList() {
+  const chosen = S.folderColumns
+    || S.folderColumnsDefault
+    || FOLDER_COL_IDS;
+  return chosen.filter(c => FOLDER_COLS[c]);
+}
+
+function folderColumns() {
+  return folderColumnList().filter(c => c !== 'path' || dirView.recursive);
+}
+
+async function loadCasePrefs() {
+  S.folderColumns = null;
+  S.folderColumnsDefault = null;
+  if (!S.casePath) return;
+  const r = await api.get('case/prefs').catch(() => null);
+  if (!r || r.error) return;
+  S.folderColumns = Array.isArray(r.folder_columns) ? r.folder_columns : null;
+  S.folderColumnsDefault = Array.isArray(r.folder_columns_default)
+    ? r.folder_columns_default : null;
+  if (dirView.id !== undefined && $('#dirlist .dv-list')) renderDirView();
+}
+
+async function saveFolderColumns(list) {
+  S.folderColumns = list;
+  if (!S.casePath) return;
+  const r = await api.post('case/prefs', {
+    case: S.casePath, folder_columns: list,
+  }).catch(() => null);
+  if (!r || r.error) toast(r?.error || txt('messages.columns_not_saved'));
+}
+
+function columnsMenuHTML() {
+  const shown = folderColumnList();
+  const rest = FOLDER_COL_IDS.filter(c => !shown.includes(c));
+  const row = (c, on, i) => `
+    <div class="col-row" data-col="${c}"${c === 'path'
+      ? ` title="${esc(txt('ui.dir.columns_path_note'))}"` : ''}>
+      <label class="check"><input type="checkbox" data-on ${on ? 'checked' : ''}>
+        <span>${esc(FOLDER_COLS[c].label())}</span></label>
+      <span class="col-move">
+        <button class="ghost" data-up ${on && i > 0 ? '' : 'disabled'}
+          title="${esc(txt('ui.dir.columns_up'))}">↑</button>
+        <button class="ghost" data-down ${on && i < shown.length - 1 ? '' : 'disabled'}
+          title="${esc(txt('ui.dir.columns_down'))}">↓</button>
+      </span>
+    </div>`;
+  return `
+    <div class="col-menu" id="col-menu" role="dialog"
+         aria-label="${esc(txt('ui.dir.columns'))}">
+      <div class="col-row is-fixed"><span>${esc(txt('ui.col.name'))}</span>
+        <span class="dim">${esc(txt('ui.dir.columns_always'))}</span></div>
+      ${shown.map((c, i) => row(c, true, i)).join('')}
+      ${rest.map(c => row(c, false, -1)).join('')}
+      <div class="col-foot">
+        <span class="dim">${esc(S.casePath
+          ? txt('ui.dir.columns_saved_in_case')
+          : txt('ui.dir.columns_session_only'))}</span>
+        <button class="ghost" id="col-reset">${esc(txt('ui.dir.columns_reset'))}</button>
+      </div>
+    </div>`;
+}
+
 function renderDirView() {
   const { name, part } = dirView;
   const nav = navEntries();
@@ -2762,9 +2893,15 @@ function renderDirView() {
              value="${esc(dirView.filter)}">
       <span class="dv-count">${fmt.count(matched.length)}/${
         fmt.count(dirView.entries.length)}</span>
+      ${dirView.mode === 'gallery' ? '' : `<span class="col-wrap">
+        <button class="ghost" id="dv-columns" aria-haspopup="dialog"
+          aria-expanded="${dirView.columnsOpen ? 'true' : 'false'}"
+          title="${esc(txt('ui.dir.columns_title'))}">${esc(txt('ui.dir.columns'))}</button>
+        ${dirView.columnsOpen ? columnsMenuHTML() : ''}</span>`}
     </div>`;
 
   const wide = dirView.recursive;
+  const cols = folderColumns();
 
   const rowsHTML = (from, to) => entries.slice(from, to).map((e, n) => {
     const i = from + n;
@@ -2779,20 +2916,7 @@ function renderDirView() {
       esc(e.name)}${e._nav ? ` <span class="mis">${esc(e._label)}</span>` : ''}${
       bad ? ` <span class="mis" title="${esc(t.why)}">renamed?</span>` : ''}${
       mk ? ` <span class="hash-flag ${esc(mk)}">${esc(mk.replace('_', ' '))}</span>` : ''}</td>
-          ${wide ? `<td class="c-path" title="${esc(e.path || '')}">${
-        esc(folderOf(e))}</td>` : ''}
-          <td class="sz">${e.is_dir ? '—' : fmt.bytes(e.size)}</td>
-          <td class="ty2 c-ty">${esc(t ? (t.extension_says || '—') : '')}</td>
-          <td class="ty2 c-ty${bad ? ' bad' : ''}">${esc(t ? (t.content_is
-        || (t.verdict === 'no signature' ? 'no signature' : '—')) : '')}</td>
-          <td class="dt">${fmt.time(e.created)}</td>
-          <td class="dt">${fmt.time(e.modified)}</td>
-          <td class="dt">${fmt.time(e.accessed)}</td>
-          <td class="ty2 mono c-hash" title="${esc(hashOf(e, 'md5') || '')}">${
-      e.is_dir ? '' : (hashOf(e, 'md5')
-        ? esc(hashOf(e, 'md5').slice(0, 12)) + '…' : '')}</td>
-          <td class="ty2 mono c-hash" title="${esc(hashOf(e) || '')}">${
-      e.is_dir ? '' : (hashOf(e) ? esc(hashOf(e).slice(0, 12)) + '…' : '')}</td>
+          ${cols.map(c => FOLDER_COLS[c].cell(e, t, bad)).join('')}
         </tr>`;
   }).join('');
 
@@ -2823,15 +2947,7 @@ function renderDirView() {
       }"${title ? ` title="${esc(title)}"` : ''}>${label}</th>`;
     body = `<table class="dv-list${wide ? ' is-flat' : ''}">
       <thead><tr>${th('name', txt('ui.col.name'))}${
-        wide ? th('path', txt('ui.col.path'), 'c-path',
-                  txt('ui.dir.title_path')) : ''}${th('size', txt('ui.kv.size'))}
-        <th class="c-ty" title="${txt('ui.dir.title_extension')}">${txt('ui.render_dir_view.extension')}</th>
-        <th class="c-ty" title="${txt('ui.dir.title_signature')}">${txt('ui.render_dir_view.signature')}</th>
-        ${th('created', txt('ui.kv.created'))}${th('modified', txt('ui.kv.modified'))}
-        ${th('accessed', txt('ui.kv.accessed'))}
-        <th class="c-hash" title="${txt('ui.dir.title_md5')}">${txt('ui.render_dir_view.md5')}</th>
-        <th class="c-hash" title="${txt('ui.dir.title_sha256')}"
-          >${txt('ui.render_dir_view.sha')}</th></tr></thead>
+        cols.map(c => FOLDER_COLS[c].head(th)).join('')}</tr></thead>
       <tbody>${rowsHTML(0, shown)}</tbody></table>`;
     if (!dirView.entries.length) {
       body += `<p class="empty">${txt('messages.empty_directory')}</p>`;
@@ -2932,6 +3048,7 @@ function renderDirView() {
       dirView.shown = PAGE_ROWS;
       renderDirView();
     }));
+  wireColumnsMenu();
   const f = $('#dv-filter');
   if (f) {
     f.addEventListener('input', () => {
@@ -2945,6 +3062,62 @@ function renderDirView() {
     });
   }
 }
+
+function wireColumnsMenu() {
+  $('#dv-columns')?.addEventListener('click', ev => {
+    ev.stopPropagation();
+    dirView.columnsOpen = !dirView.columnsOpen;
+    renderDirView();
+    $(dirView.columnsOpen ? '#col-menu input' : '#dv-columns')?.focus();
+  });
+  const menu = $('#col-menu');
+  if (!menu) return;
+  // Fixed, from the button's own position: the listing pane is short and
+  // clips anything drawn inside it.
+  const at = $('#dv-columns').getBoundingClientRect();
+  menu.style.top = Math.round(at.bottom + 4) + 'px';
+  menu.style.right = Math.max(8, Math.round(window.innerWidth - at.right)) + 'px';
+  menu.style.maxHeight = Math.max(160, window.innerHeight - at.bottom - 24) + 'px';
+  menu.addEventListener('click', ev => ev.stopPropagation());
+  const change = async list => {
+    await saveFolderColumns(list);
+    renderDirView();
+  };
+  $$('#col-menu .col-row[data-col]').forEach(row => {
+    const c = row.dataset.col;
+    row.querySelector('[data-on]').addEventListener('change', ev => {
+      const now = folderColumnList().filter(x => x !== c);
+      change(ev.target.checked ? [...now, c] : now);
+    });
+    const move = by => {
+      const list = folderColumnList();
+      const i = list.indexOf(c);
+      const j = i + by;
+      if (i < 0 || j < 0 || j >= list.length) return;
+      [list[i], list[j]] = [list[j], list[i]];
+      change(list);
+    };
+    row.querySelector('[data-up]')?.addEventListener('click', () => move(-1));
+    row.querySelector('[data-down]')?.addEventListener('click', () => move(1));
+  });
+  $('#col-reset')?.addEventListener('click', async () => {
+    await saveFolderColumns(null);
+    renderDirView();
+  });
+}
+
+function closeColumnsMenu() {
+  if (!dirView.columnsOpen) return;
+  dirView.columnsOpen = false;
+  if ($('#col-menu')) renderDirView();
+}
+document.addEventListener('click', closeColumnsMenu);
+document.addEventListener('keydown', ev => {
+  if (ev.key === 'Escape' && dirView.columnsOpen) {
+    closeColumnsMenu();
+    $('#dv-columns')?.focus();
+  }
+});
 
 let pvToken = null;
 
@@ -3378,6 +3551,7 @@ function switchTo(state, { keepTree = false } = {}) {
   previewNone(txt('messages.select_partition_file'));
   loadMarks();
   loadNotes();
+  loadTemplates();
   refreshIndexState();
   loadTimezone(false);
   const now = (state.evidence || [])
@@ -5443,19 +5617,34 @@ function parseSize(s) {
 function currentFilters() {
   const exts = $('#f-ext').value.split(',').map(s => s.trim().replace(/^\./, '')
     .toLowerCase()).filter(Boolean);
+  const dayEnd = id => $(id).value ? $(id).value + 'T23:59:59Z' : null;
   const f = {
+    name: $('#f-name').value.trim() || null,
     extensions: exts.length ? exts : null,
     min_size: parseSize($('#f-min').value),
     max_size: parseSize($('#f-max').value),
     modified_after: $('#f-mod-after').value || null,
-    modified_before: $('#f-mod-before').value
-      ? $('#f-mod-before').value + 'T23:59:59Z' : null,
+    modified_before: dayEnd('#f-mod-before'),
+    created_after: $('#f-cr-after').value || null,
+    created_before: dayEnd('#f-cr-before'),
+    accessed_after: $('#f-ac-after').value || null,
+    accessed_before: dayEnd('#f-ac-before'),
     deleted_only: $('#f-deleted').checked,
+    hide_deleted: $('#f-hide-deleted').checked,
     files_only: $('#f-files').checked,
   };
   return Object.fromEntries(Object.entries(f).filter(([, v]) =>
     v !== null && v !== false));
 }
+
+// "Deleted only" and "hide deleted" contradict each other, so switching one on
+// switches the other off.
+$('#f-deleted')?.addEventListener('change', () => {
+  if ($('#f-deleted').checked) $('#f-hide-deleted').checked = false;
+});
+$('#f-hide-deleted')?.addEventListener('change', () => {
+  if ($('#f-hide-deleted').checked) $('#f-deleted').checked = false;
+});
 
 async function doFind() {
   const partVal = $('#find-scope').value;
@@ -8456,6 +8645,385 @@ $('#note-body')?.addEventListener('keydown', e => {
 });
 $('#note-show-retracted')?.addEventListener('change', loadNotes);
 
+// Structure templates: rows of (offset, size, name, kind, note) an examiner
+// writes in the interface and keeps in the case. The server validates every
+// field again; this only shapes the form and shows what it sends back.
+const TPL = {
+  case: null, list: [], kinds: [], limits: {},
+  sel: null,          // a saved template's id, 'new', or null
+  draft: null,        // {name, description, fields: [{offset, size, ...}]}
+  revision: null,     // the saved revision the draft started from
+  dirty: false, error: '', preview: null, previewAt: '', previewBase: 0,
+};
+
+const TPL_FIXED = { u8: 1, u16: 2, u32: 4, u64: 8, i8: 1, i16: 2, i32: 4,
+                    i64: 8, guid: 16 };
+
+const tplBlankField = () => ({ offset: '', size: '', name: '', kind: 'u32',
+                               note: '' });
+
+function tplDraftFrom(t) {
+  return {
+    name: t.name, description: t.description || '',
+    fields: t.fields.map(f => ({ offset: String(f.offset),
+                                 size: String(f.size), name: f.name,
+                                 kind: f.kind, note: f.note || '' })),
+  };
+}
+
+// "28", "0x1C" or "1C" (with an 0x) as a whole number; anything else is null,
+// which the server answers with a message naming the field.
+function tplNumber(text) {
+  const t = String(text ?? '').trim();
+  if (/^0x[0-9a-f]+$/i.test(t)) return parseInt(t, 16);
+  if (/^\d+$/.test(t)) return parseInt(t, 10);
+  return null;
+}
+
+function tplBody() {
+  const d = TPL.draft;
+  return {
+    name: d.name, description: d.description,
+    fields: d.fields.map(f => ({ offset: tplNumber(f.offset),
+                                 size: tplNumber(f.size), name: f.name,
+                                 kind: f.kind, note: f.note })),
+  };
+}
+
+const tplSelected = () => TPL.list.find(t => t.id === TPL.sel) || null;
+
+async function loadTemplates() {
+  if (!S.casePath) {
+    Object.assign(TPL, { case: null, list: [], sel: null, draft: null,
+                         revision: null, dirty: false, error: '',
+                         preview: null });
+    return renderTemplates();
+  }
+  const r = await api.get('case/templates').catch(() => null);
+  if (!r || r.error) {
+    TPL.error = r?.error || '';
+    return renderTemplates();
+  }
+  if (TPL.case && TPL.case !== r.case) {
+    Object.assign(TPL, { sel: null, draft: null, revision: null,
+                         dirty: false, preview: null });
+  }
+  TPL.case = r.case;
+  TPL.list = r.templates || [];
+  TPL.kinds = r.kinds || [];
+  TPL.limits = r.limits || {};
+  TPL.error = '';
+  // What is being edited was deleted elsewhere: keep the form so the work
+  // is not lost, but it can only be saved as a new template.
+  if (TPL.sel !== null && TPL.sel !== 'new' && !tplSelected()) {
+    TPL.sel = 'new';
+    TPL.revision = null;
+  }
+  renderTemplates();
+}
+
+function tplDiscardOk() {
+  return !TPL.dirty || window.confirm(txt('ui.templates.confirm_discard'));
+}
+
+function tplChoose(id) {
+  if (id === TPL.sel && TPL.draft) return;
+  if (!tplDiscardOk()) return;
+  const t = id === 'new' ? null : TPL.list.find(x => x.id === id);
+  TPL.sel = t ? t.id : 'new';
+  TPL.draft = t ? tplDraftFrom(t)
+    : { name: '', description: '', fields: [tplBlankField()] };
+  TPL.revision = t ? t.revision : null;
+  TPL.dirty = false;
+  TPL.preview = null;
+  renderTemplates();
+}
+
+function tplKindOptions(cur) {
+  const ints = TPL.kinds.filter(k => k in TPL_FIXED && k !== 'guid');
+  const rest = TPL.kinds.filter(k => !ints.includes(k));
+  const opt = k => `<option value="${esc(k)}"${k === cur ? ' selected' : ''}>${
+    esc(k)}</option>`;
+  return `<optgroup label="${esc(txt('ui.templates.kind_group_int'))}">${
+    ints.map(opt).join('')}</optgroup><optgroup label="${
+    esc(txt('ui.templates.kind_group_other'))}">${rest.map(opt).join('')}</optgroup>`;
+}
+
+function renderTemplates() {
+  const list = $('#tpl-list');
+  const ed = $('#tpl-editor');
+  const out = $('#tpl-results');
+  if (!list || !ed || !out) return;
+  $('#btn-tpl-new').disabled = !S.casePath;
+  if (!S.casePath) {
+    list.innerHTML = '';
+    ed.innerHTML = `<p class="empty">${esc(txt('ui.templates.no_case'))}</p>`;
+    out.innerHTML = '';
+    return;
+  }
+  if (TPL.error) {
+    ed.innerHTML = `<p class="empty">${esc(TPL.error)}</p>`;
+    return;
+  }
+  list.innerHTML = TPL.list.length
+    ? `<div class="tpl-items" role="listbox" aria-label="${
+        esc(txt('ui.templates.list_label'))}">${TPL.list.map(t => `
+        <button class="tpl-item${t.id === TPL.sel ? ' is-on' : ''}${
+          t.damaged ? ' is-bad' : ''}" data-id="${t.id}" role="option"
+          aria-selected="${t.id === TPL.sel}">${esc(t.name)}${
+          t.damaged ? ' ⚠' : ''}</button>`).join('')}</div>`
+    : `<p class="empty">${esc(txt('ui.templates.none'))}</p>`;
+  $$('#tpl-list .tpl-item').forEach(b =>
+    b.addEventListener('click', () => tplChoose(+b.dataset.id)));
+
+  const d = TPL.draft;
+  if (!d) {
+    ed.innerHTML = '';
+    out.innerHTML = `<p class="empty">${esc(txt('ui.templates.preview_empty'))}</p>`;
+    return;
+  }
+  const saved = tplSelected();
+  const max = TPL.limits;
+  const meta = saved
+    ? `<p class="hint">${esc(txt('ui.templates.saved_by', {
+        who: saved.examiner || '—', when: fmt.time(saved.updated_at),
+        revision: saved.revision }))}</p>` : '';
+  const damaged = saved?.damaged
+    ? `<p class="hint is-warn">${esc(txt('ui.templates.damaged',
+        { why: saved.damaged }))}</p>` : '';
+  ed.innerHTML = `
+    ${meta}${damaged}
+    <label class="field"><span>${esc(txt('ui.templates.name'))}</span>
+      <input type="text" id="tpl-name" maxlength="${max.name || 80}"
+             value="${esc(d.name)}"></label>
+    <label class="field"><span>${esc(txt('ui.templates.description'))}</span>
+      <textarea id="tpl-desc" rows="2"
+        maxlength="${max.description || 500}">${esc(d.description)}</textarea></label>
+    <table class="tpl-fields">
+      <thead><tr>
+        <th>${esc(txt('ui.templates.col_offset'))}</th>
+        <th>${esc(txt('ui.templates.col_size'))}</th>
+        <th>${esc(txt('ui.templates.col_name'))}</th>
+        <th>${esc(txt('ui.templates.col_kind'))}</th>
+        <th>${esc(txt('ui.templates.col_note'))}</th><th></th></tr></thead>
+      <tbody>${d.fields.map((f, i) => `
+        <tr data-i="${i}">
+          <td><input type="text" data-k="offset" value="${esc(f.offset)}"
+               placeholder="${esc(txt('ui.templates.offset_hint'))}"
+               inputmode="text"></td>
+          <td><input type="text" data-k="size" value="${esc(f.size)}"
+               ${f.kind in TPL_FIXED ? 'readonly' : ''}></td>
+          <td><input type="text" data-k="name" value="${esc(f.name)}"
+               maxlength="${max.name || 80}"></td>
+          <td><select data-k="kind">${tplKindOptions(f.kind)}</select></td>
+          <td><input type="text" data-k="note" value="${esc(f.note)}"
+               maxlength="${max.note || 200}"></td>
+          <td><button class="ghost" data-remove
+               title="${esc(txt('ui.templates.remove_field'))}"
+               aria-label="${esc(txt('ui.templates.remove_field'))}">✕</button></td>
+        </tr>`).join('')}</tbody></table>
+    <div class="row">
+      <button class="ghost" id="tpl-add-field">${esc(txt('ui.templates.add_field'))}</button>
+      <span class="hint">${d.fields.length}/${max.fields || 512}</span>
+    </div>
+    <div class="row tpl-actions">
+      <button class="solid" id="tpl-save">${esc(txt('ui.templates.save'))}</button>
+      ${saved ? `<button class="ghost" id="tpl-copy">${
+        esc(txt('ui.templates.save_copy'))}</button>
+        <button class="ghost" id="tpl-delete">${
+        esc(txt('ui.templates.delete'))}</button>` : ''}
+      <button class="ghost" id="tpl-revert"${TPL.dirty ? '' : ' disabled'}>${
+        esc(txt('ui.templates.revert'))}</button>
+      <span class="hint" id="tpl-dirty">${
+        TPL.dirty ? esc(txt('ui.templates.unsaved')) : ''}</span>
+    </div>
+    <div class="tpl-try">
+      <h4>${esc(txt('ui.templates.preview_heading'))}</h4>
+      <div class="row">
+        <label class="row"><span>${esc(txt('ui.templates.preview_from'))}</span>
+          <select id="tpl-base">${tplBaseOptions()}</select></label>
+        <label class="row"><span>${esc(txt('ui.templates.preview_at'))}</span>
+          <input type="text" id="tpl-at" value="${esc(TPL.previewAt)}"
+                 placeholder="${esc(txt('ui.templates.preview_offset_hint'))}"></label>
+        <button class="solid" id="tpl-preview">${esc(txt('ui.templates.preview'))}</button>
+      </div>
+    </div>`;
+  wireTemplateEditor();
+  renderTemplatePreview();
+}
+
+// Where an offset is counted from: the start of the image, or the start of
+// one of its partitions.
+function tplBaseOptions() {
+  const parts = (S.volumes?.partitions || []);
+  return [`<option value="0"${TPL.previewBase === 0 ? ' selected' : ''}>${
+    esc(txt('ui.templates.from_image'))}</option>`].concat(parts.map((p, i) =>
+    `<option value="${p.offset}"${TPL.previewBase === p.offset ? ' selected' : ''}>${
+      esc(txt('ui.templates.from_partition', {
+        name: p.slot || `#${i + 1}`, offset: '0x' + fmt.hex(p.offset, 8) }))
+    }</option>`)).join('');
+}
+
+function tplMarkDirty() {
+  TPL.dirty = true;
+  const el = $('#tpl-dirty');
+  if (el) el.textContent = txt('ui.templates.unsaved');
+  const rv = $('#tpl-revert');
+  if (rv) rv.disabled = false;
+}
+
+function wireTemplateEditor() {
+  $('#tpl-name').addEventListener('input', e => {
+    TPL.draft.name = e.target.value; tplMarkDirty();
+  });
+  $('#tpl-desc').addEventListener('input', e => {
+    TPL.draft.description = e.target.value; tplMarkDirty();
+  });
+  $$('#tpl-editor .tpl-fields tbody tr').forEach(tr => {
+    const f = TPL.draft.fields[+tr.dataset.i];
+    tr.querySelectorAll('[data-k]').forEach(inp => {
+      const k = inp.dataset.k;
+      inp.addEventListener(k === 'kind' ? 'change' : 'input', () => {
+        f[k] = inp.value;
+        tplMarkDirty();
+        if (k === 'kind') {
+          // A kind with a fixed width sets the size, so it cannot disagree.
+          if (f.kind in TPL_FIXED) f.size = String(TPL_FIXED[f.kind]);
+          renderTemplates();
+        }
+      });
+    });
+    tr.querySelector('[data-remove]').addEventListener('click', () => {
+      TPL.draft.fields.splice(+tr.dataset.i, 1);
+      if (!TPL.draft.fields.length) TPL.draft.fields.push(tplBlankField());
+      tplMarkDirty();
+      renderTemplates();
+    });
+  });
+  $('#tpl-add-field').addEventListener('click', () => {
+    TPL.draft.fields.push(tplBlankField());
+    tplMarkDirty();
+    renderTemplates();
+    const rows = $$('#tpl-editor .tpl-fields tbody tr');
+    rows[rows.length - 1]?.querySelector('[data-k="offset"]')?.focus();
+  });
+  $('#tpl-save').addEventListener('click', () => saveTemplate(false));
+  $('#tpl-copy')?.addEventListener('click', () => saveTemplate(true));
+  $('#tpl-delete')?.addEventListener('click', deleteTemplate);
+  $('#tpl-revert').addEventListener('click', () => {
+    if (!window.confirm(txt('ui.templates.confirm_discard'))) return;
+    // The current saved version, which after a conflict is the other
+    // examiner's, so the revision moves with it.
+    const t = tplSelected();
+    TPL.draft = t ? tplDraftFrom(t)
+      : { name: '', description: '', fields: [tplBlankField()] };
+    TPL.revision = t ? t.revision : null;
+    TPL.dirty = false;
+    $('#tpl-results').innerHTML = '';
+    renderTemplates();
+  });
+  $('#tpl-base').addEventListener('change', e => { TPL.previewBase = +e.target.value; });
+  $('#tpl-at').addEventListener('input', e => { TPL.previewAt = e.target.value; });
+  $('#tpl-at').addEventListener('keydown', e => {
+    if (e.key === 'Enter') previewTemplate();
+  });
+  $('#tpl-preview').addEventListener('click', previewTemplate);
+}
+
+async function saveTemplate(asCopy) {
+  const editing = !asCopy && TPL.sel !== 'new' && tplSelected();
+  const body = { case: TPL.case, template: tplBody() };
+  if (asCopy) {
+    // A copy is a new template: it keeps the fields, and needs its own name.
+    body.template.name = (TPL.draft.name || '').trim()
+      + txt('ui.templates.copy_suffix');
+  } else if (editing) {
+    body.id = TPL.sel;
+    body.revision = TPL.revision;
+  }
+  const r = await api.post('case/template', body).catch(() => null);
+  if (!r) return toast(txt('messages.templates_conflict'));
+  if (r.templates) TPL.list = r.templates;
+  if (r.error) {
+    // The form stays as it was, so nothing typed is lost.
+    if (r.templates) toast(txt('messages.templates_conflict'));
+    TPL.error = '';
+    renderTemplates();
+    $('#tpl-results').innerHTML = `<p class="empty is-warn">${esc(r.error)}</p>`;
+    return;
+  }
+  TPL.sel = r.id;
+  TPL.draft = tplDraftFrom(r.template);
+  TPL.revision = r.template.revision;
+  TPL.dirty = false;
+  renderTemplates();
+  toast(txt('messages.templates_saved'), 'action');
+  if (TPL.previewAt.trim()) previewTemplate();
+}
+
+async function deleteTemplate() {
+  const t = tplSelected();
+  if (!t || !window.confirm(txt('ui.templates.confirm_delete', { name: t.name }))) return;
+  const r = await api.post('case/template/delete',
+                           { case: TPL.case, id: t.id,
+                             revision: TPL.revision }).catch(() => null);
+  if (r?.templates) TPL.list = r.templates;
+  if (!r || r.error) {
+    toast(r?.error || txt('messages.templates_conflict'));
+    return renderTemplates();
+  }
+  Object.assign(TPL, { sel: null, draft: null, revision: null,
+                       dirty: false, preview: null });
+  renderTemplates();
+  toast(txt('messages.templates_deleted'), 'action');
+}
+
+async function previewTemplate() {
+  if (!S.open) return toast(txt('messages.templates_need_evidence'));
+  const at = tplNumber(TPL.previewAt);
+  const r = await api.post('structure/preview', {
+    template: tplBody(), offset: at === null ? -1 : at,
+    part: TPL.previewBase || undefined,
+  }).catch(() => null);
+  TPL.preview = r && !r.error ? r : { error: r?.error || '' };
+  renderTemplatePreview();
+}
+
+function renderTemplatePreview() {
+  const out = $('#tpl-results');
+  if (!out) return;
+  const p = TPL.preview;
+  if (!p) {
+    out.innerHTML = `<p class="empty">${esc(txt('ui.templates.preview_empty'))}</p>`;
+    return;
+  }
+  if (p.error !== undefined) {
+    out.innerHTML = `<p class="empty is-warn">${esc(p.error)}</p>`;
+    return;
+  }
+  const total = p.fields.length + p.skipped;
+  out.innerHTML = `
+    <div class="results-head">${esc(txt('ui.templates.preview_title', {
+      name: TPL.draft?.name || '', offset: fmt.hex(p.offset, 8) }))}</div>
+    ${p.skipped ? `<p class="hint is-warn">${esc(txt('ui.templates.preview_short',
+      { skipped: p.skipped, total }))}</p>` : ''}
+    <table class="tpl-out">
+      <thead><tr><th>${esc(txt('ui.templates.col_name'))}</th>
+        <th>${esc(txt('ui.templates.col_value'))}</th>
+        <th>${esc(txt('ui.templates.col_raw'))}</th>
+        <th>${esc(txt('ui.templates.col_at'))}</th>
+        <th>${esc(txt('ui.templates.col_note'))}</th></tr></thead>
+      <tbody>${p.fields.map((f, i) => `
+        <tr data-i="${i}" title="${esc(f.note || '')}">
+          <td>${esc(f.name)}</td>
+          <td class="mono">${esc(String(f.value))}</td>
+          <td class="mono dim">${esc(f.raw)}</td>
+          <td class="mono dim">0x${fmt.hex(f.offset, 8)} · ${f.size}B</td>
+          <td class="dim">${esc(f.note || '')}</td></tr>`).join('')}</tbody></table>`;
+}
+
+$('#btn-tpl-new')?.addEventListener('click', () => tplChoose('new'));
+
 function markFrame() {
   if (!S.scope.file || !S.scope.entry) return { frame: 'media' };
   const e = S.scope.entry;
@@ -8544,6 +9112,7 @@ function applyEmptyCase(r) {
   S.volumes = null;
   S.caseInfo = r.case;
   S.casePath = next;
+  loadCasePrefs();
   S.exhibits = [];
   S.activeId = null;
   startPulse();
@@ -8570,6 +9139,7 @@ function applyEmptyCase(r) {
   setEmptyScope(caseFile || r.case?.name || txt('ui.cases.no_case'), null);
   S.noteEdit = null;
   loadNotes();
+  loadTemplates();
 }
 
 function examinerName() {
@@ -8893,6 +9463,7 @@ function toast(msg, channel = 'problem') {
 const OPEN_STAGES = [
   ['bookmarks…', () => loadMarks()],
   [txt('ui.app.notes'), () => loadNotes()],
+  [txt('ui.app.templates'), () => loadTemplates()],
   [txt('ui.tagged_items_2'), () => loadTags()],
   [txt('ui.saved_searches_2'), () => loadSavedSearches()],
   [txt('ui.hash_sets'), () => loadHashSets()],
@@ -8944,6 +9515,7 @@ function applyOpened(r, { tree = true } = {}) {
   S.volumes = r.volumes;
   S.caseInfo = r.case;
   S.casePath = r.case_path || null;
+  loadCasePrefs();
   S.exhibits = r.evidence || [];
   S.activeId = r.active_id ?? null;
   S.evidenceId = r.evidence_id ?? null;
@@ -9368,6 +9940,8 @@ function applyNoCase() {
   S.volumes = null;
   S.caseInfo = null;
   S.casePath = null;
+  S.folderColumns = null;
+  S.folderColumnsDefault = null;
   S.exhibits = [];
   S.activeId = null;
   S.evidenceId = null;
@@ -9377,6 +9951,7 @@ function applyNoCase() {
   S.tags = [];
   S.notes = [];
   loadNotes();
+  loadTemplates();
   $('#evidence-bar').innerHTML = `
     <button class="ghost" id="btn-open">${txt('ui.app.open')}</button>
     <button class="ghost" id="btn-case">${txt('ui.app.case')}</button>`;
@@ -10312,6 +10887,7 @@ function setModule(view) {
   if (view === 'time') loadStoredTimeline();
   if (view === 'diff') renderDiffPanel();
   if (view === 'notes') loadNotes();
+  if (view === 'templates') loadTemplates();
   hex.resize();
 }
 
