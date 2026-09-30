@@ -60,6 +60,7 @@ from . import vss as vss_mod
 from . import listingdiff as listingdiff_mod
 from . import vssstore as vssstore_mod
 from . import casepref as casepref_mod
+from . import raid as raid_mod
 from . import structure as structure_mod
 from . import volume as volume_mod
 from . import logical as logical_mod
@@ -250,7 +251,7 @@ class Evidence:
         self.evidence_id = evidence_id
         self.image = image or open_image(path)
         self.volumes = volume_mod.scan(self.image)
-        self.label = os.path.basename(path)
+        self.label = getattr(self.image, "label", None) or os.path.basename(path)
         self.fs_cache = {}
         self.snapshot_cache = {}
         self._structures = None
@@ -382,6 +383,14 @@ class Session:
             self.case.db.commit()
         return gone
 
+    def _drop_items(self):
+        """Let go of every exhibit. A RAID set holds its members open, and
+        nothing else does, so they are closed here."""
+        for item in list(self.items.values()):
+            if isinstance(item.image, raid_mod.RaidImage):
+                item.image.close()
+        self.items = {}
+
     def evidence(self, which=None):
         if which in (None, ""):
             return self.current
@@ -418,7 +427,7 @@ class Session:
 
     def new_case(self, case_path, name=None, examiner=None):
         self._use_case(case_path, examiner, name=name)
-        self.items = {}
+        self._drop_items()
         self.active_id = None
         return self.state()
 
@@ -437,7 +446,7 @@ class Session:
         except Exception:
             pass
         self.case = None
-        self.items = {}
+        self._drop_items()
         self.active_id = None
         self.tasks = {}
         if REGISTRY is not None:
@@ -448,7 +457,18 @@ class Session:
         return out
 
     def open(self, path, case_path=None, examiner=None, add=False,
-             logical=False):
+             logical=False, raid=None):
+        if raid is not None:
+            # A RAID set is assembled from its members for this exhibit
+            # alone, so it is not shared between sessions as a file is; its
+            # name is an identifier derived from the definition, not a path.
+            img = raid_mod.RaidImage(raid)
+            try:
+                return self._open(img.path, img, case_path, examiner, add,
+                                  definition=img.definition)
+            except BaseException:
+                img.close()
+                raise
         if REGISTRY is not None:
             img = REGISTRY.image(path, logical=logical)
         else:
@@ -459,7 +479,7 @@ class Session:
             if REGISTRY is not None:
                 REGISTRY.done_opening(path, logical=logical)
 
-    def _open(self, path, img, case_path, examiner, add):
+    def _open(self, path, img, case_path, examiner, add, definition=None):
         if not add or self.case is None:
             case_path = case_path or os.path.splitext(path)[0] + ".strata"
             if self.case is None or (case_path and
@@ -467,14 +487,21 @@ class Session:
                                      os.path.abspath(self.case.path)):
                 self._use_case(case_path, examiner)
             if not add:
-                self.items = {}
+                self._drop_items()
                 self.active_id = None
         # A differencing disk reads through its parents; which files those
         # were is part of what the exhibit is.
         parents_of = getattr(img, "parent_paths", None)
         parents = parents_of() if callable(parents_of) else []
-        ev_id = self.case.add_evidence(path, img.info(), parents=parents)
+        ev_id = self.case.add_evidence(path, img.info(), parents=parents,
+                                       label=getattr(img, "label", None),
+                                       definition=definition)
         item = Evidence(path, ev_id, image=img)
+        again = self.items.get(ev_id)
+        if again is not None and again.image is not img \
+                and isinstance(again.image, raid_mod.RaidImage):
+            # The same set opened twice: the earlier assembly is replaced.
+            again.image.close()
         self.items[ev_id] = item
         self.active_id = ev_id
         self.case.log("evidence.open", {"path": path, "evidence_id": ev_id,
@@ -497,7 +524,7 @@ class Session:
 
     def open_case(self, case_path, examiner=None):
         self._use_case(case_path, examiner)
-        self.items = {}
+        self._drop_items()
         self.active_id = None
         self.case.log("case.open", {"path": case_path, "evidence": 0,
                                     "tool": version_mod.label(),
@@ -512,6 +539,8 @@ class Session:
             self.active_id = next(iter(self.items), None)
         self.case.log("evidence.close", {"evidence_id": int(ev_id),
                                          "path": item.path})
+        if isinstance(item.image, raid_mod.RaidImage):
+            item.image.close()
         return True
 
     def state(self):
@@ -732,9 +761,15 @@ class Session:
             return
         path = treecache_mod.path_for(cache, ev.path, offset, snap=snap)
         parents_of = getattr(ev.image, "parent_paths", None)
+        parents = parents_of() if callable(parents_of) else ()
+        # A RAID set is not a file: its listing is stamped by its first
+        # member, the others, and how they were put together.
+        base = getattr(ev.image, "stamp_path", None)
+        if base:
+            parents = [p for p in parents if p != base]
         want = treecache_mod.stamp(
-            ev.path, offset, snap=snap,
-            parents=parents_of() if callable(parents_of) else ())
+            base or ev.path, offset, snap=snap, parents=parents,
+            extra=getattr(ev.image, "stamp_extra", ""))
         fs.tree_store = (lambda: treecache_mod.load(path, want),
                          lambda tree: treecache_mod.save(path, tree, want))
 
@@ -2087,6 +2122,47 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"examiner": who,
                                     "prefs": prefs_mod.forget(who)})
 
+        if path in ("/api/raid/check", "/api/raid/open"):
+            try:
+                defn = raid_mod.clean_definition(body.get("definition"))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            if path == "/api/raid/open":
+                # A set has no file to name a case after, so a new case
+                # must be named; adding to an open one needs nothing.
+                if not (body.get("case") or (body.get("add") and s.case)):
+                    return self._send(400, {"error": _t("server.raid.case_needed")})
+                if not body.get("add") and s.running_tasks():
+                    return self._send(409, self._tasks_busy(
+                        s, "replace what is open"))
+                try:
+                    return self._send(200, s.open(
+                        None, body.get("case"), self._claim(s, body),
+                        add=bool(body.get("add")), raid=defn))
+                except casedb_mod.NotACase as exc:
+                    return self._send(400, {"error": str(exc)})
+                except raid_mod.RaidError as exc:
+                    return self._send(400, {"error": exc.message,
+                                            "advice": exc.advice})
+            # A check assembles the set, looks at what it holds, and lets go:
+            # nothing is added to a case.
+            try:
+                img = raid_mod.RaidImage(defn)
+            except raid_mod.RaidError as exc:
+                return self._send(400, {"error": exc.message,
+                                        "advice": exc.advice})
+            try:
+                scan = volume_mod.scan(img)
+                found = [{"offset": p.get("offset"), "size": p.get("size"),
+                          "slot": p.get("slot"), "fs": p.get("detected")}
+                         for p in scan.get("partitions") or []]
+                return self._send(200, {
+                    "definition": defn, "id": img.path, "info": img.info(),
+                    "scheme": scan.get("scheme"), "volumes": found,
+                    "recognised": any(p["fs"] for p in found)})
+            finally:
+                img.close()
+
         if path == "/api/open":
             p = body.get("path")
             kind = body.get("kind")
@@ -2094,6 +2170,20 @@ class Handler(BaseHTTPRequestHandler):
                 kind = "logical"
             if kind is None and p and s.case:
                 kind = s.case.evidence_kind(p)
+            if kind == "raid" or (p and raid_mod.is_set_id(p)):
+                # An exhibit that is a RAID set is opened from its stored
+                # definition, not from a path.
+                defn = s.case.evidence_definition(p) if s.case else None
+                if defn is None:
+                    return self._send(400, {"error": _t("server.open.raid_definition")})
+                try:
+                    return self._send(200, s.open(
+                        None, body.get("case"), self._claim(s, body),
+                        add=bool(body.get("add")),
+                        raid=raid_mod.clean_definition(defn)))
+                except (ValueError, raid_mod.RaidError) as exc:
+                    return self._send(400, {
+                        "error": getattr(exc, "message", None) or str(exc)})
             kind = "file" if kind == "zip" else (kind or "image")
             if kind not in ("image", "file", "folder", "logical"):
                 return self._send(400, {"error": _t("server.open.bad_kind") % kind})
@@ -2498,9 +2588,28 @@ class Handler(BaseHTTPRequestHandler):
                                  or casedb_mod.infer_kind(i["path"],
                                                           i.get("format")))
                      for i in items}
+            # A RAID set is not a file: it is its definition, and it can be
+            # opened when its members are there.
+            defs = {}
+            for i in items:
+                if kinds.get(i["path"]) == "raid":
+                    try:
+                        defs[i["path"]] = raid_mod.clean_definition(
+                            json.loads(i.get("definition") or "null"))
+                    except (ValueError, TypeError):
+                        defs[i["path"]] = None
             here, missing = [], []
             for path in wanted:
                 k = kinds.get(path) or "image"
+                if k == "raid":
+                    gone = [m for m in raid_mod.member_paths(defs[path])
+                            if not os.path.isfile(m)] if defs.get(path) \
+                        else [path]
+                    if gone:
+                        missing.extend(gone)
+                    else:
+                        here.append(path)
+                    continue
                 there = (os.path.isdir(path) if k == "folder"
                          else os.path.isfile(path))
                 (here if there else missing).append(path)
@@ -2517,7 +2626,8 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     state = s.open(path, cp, who, add=n > 0,
                                    logical=(kinds.get(path) or "image")
-                                   != "image")
+                                   not in ("image", "raid"),
+                                   raid=defs.get(path))
                 except Exception as exc:
                     failed.append({"path": path, "error": str(exc)})
             if state is None:

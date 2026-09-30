@@ -203,6 +203,31 @@ def _qcow2_seed():
         version=3, pack=True)
 
 
+def run_raid_definition(data):
+    """A RAID set definition is typed in by an examiner, sent over HTTP and
+    stored in a case: whatever arrives must be accepted or refused with a
+    ValueError, and an accepted one must build a set or say why it cannot."""
+    import json
+    from engine import raid
+    try:
+        d = json.loads(data.decode("utf-8", "replace"))
+    except ValueError:
+        return
+    clean = raid.clean_definition(d)
+    raid.set_id(clean)
+    raid.member_paths(clean)
+
+
+def _raid_definition_seed():
+    import json
+    return json.dumps({
+        "name": "Fuzz set", "level": 5, "chunk": 65536,
+        "layout": "left-symmetric",
+        "members": [{"path": "/x/a.img", "offset": 0},
+                    {"path": "/x/b.img", "offset": 4096},
+                    {"path": None, "offset": 0}]}).encode()
+
+
 def run_vmdk(data):
     run_ewf(data, name="disk.vmdk")
 
@@ -358,6 +383,7 @@ def targets():
     out["vhd-dynamic"] = (lambda: imagebuild_vhd.sparse(
         5 * 4096, _vhd_blocks())[0], run_vhd)
     out["vhd-diff"] = (_vhd_diff_seed, run_vhd_diff)
+    out["raid-definition"] = (_raid_definition_seed, run_raid_definition)
     out["vdi"] = (_vdi_seed, run_vdi)
     out["qcow2"] = (_qcow2_seed, run_qcow2)
     out["vmdk-stream"] = (lambda: imagebuild_vmdk.build_stream_optimized()[0],

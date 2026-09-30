@@ -2198,3 +2198,20 @@ menu.save-first .solid { order: 2; }
 .tpl-out td { padding: 2px 8px; vertical-align: top; }
 .tpl-out tbody tr:hover { background: var(--raise); }
 .is-warn { color: var(--amber); }
+
+/* RAID set assembly */
+.dlg-raid { min-width: min(760px, 94vw); }
+.raid-params { flex-wrap: wrap; gap: 10px; align-items: center; }
+.raid-members { margin: 6px 0; }
+.raid-row {
+  display: flex; align-items: center; gap: 6px; padding: 2px 4px;
+  border-left: 2px solid transparent;
+}
+.raid-row.is-focus { border-left-color: var(--amber); background: var(--raise); }
+.raid-slot { flex: 0 0 66px; color: var(--dim); font-size: 11px; }
+.raid-row input[data-k="path"] { flex: 1 1 auto; min-width: 0; }
+.raid-row input[data-k="offset"] { flex: 0 0 74px; }
+.raid-move { display: flex; gap: 2px; }
+.raid-move button { padding: 0 6px; font-size: 11px; line-height: 16px; }
+.raid-check { margin-top: 6px; }
+.raid-check p { margin: 3px 0; }

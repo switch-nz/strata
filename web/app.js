@@ -1713,6 +1713,18 @@ function kv(pairs) {
     `<dt>${k}</dt><dd class="${num ? 'num' : ''}">${v}</dd>`).join('')}</dl>`;
 }
 
+// What a RAID set is made of, as the inspector lists it.
+function raidRows(a) {
+  const rows = [[txt('ui.kv.raid_level'), esc(a.level || '')]];
+  if (a['chunk size']) rows.push([txt('ui.kv.raid_chunk'), fmt.bytes(a['chunk size'])]);
+  if (a.layout) rows.push([txt('ui.kv.raid_layout'), esc(a.layout)]);
+  if (a['read from']) rows.push([txt('ui.kv.raid_read_from'), esc(a['read from'])]);
+  for (const k of Object.keys(a).filter(k => /^member \d+$/.test(k))) {
+    rows.push([k.replace('member', txt('ui.kv.raid_member')), esc(a[k])]);
+  }
+  return rows;
+}
+
 function showPartition(p) {
   const i = $('#inspect');
   if (p === S.image || p.format) {
@@ -1737,6 +1749,7 @@ function showPartition(p) {
         a.parent && [txt('ui.kv.parent_disk'), esc(a.parent)],
         a.parent && a['parent found by']
           && [txt('ui.kv.parent_found_by'), esc(a['parent found by'])],
+        ...(S.image.raid ? raidRows(a) : []),
       ])}
       <h3>${txt('ui.stored_hashes')}</h3>
       ${kv([
@@ -9577,6 +9590,258 @@ async function browse(path, { into = '#browser', target = '#open-path',
   }));
 }
 
+// -- Assembling a RAID set -----------------------------------------------------
+// The definition is typed here, checked by the engine, and stored in the case;
+// the members are picked from the same file browser the Open dialog uses.
+const RAID_CHUNKS = [4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288,
+                     1048576];
+const RAID_LAYOUTS = ['left-symmetric', 'left-asymmetric', 'right-symmetric',
+                      'right-asymmetric'];
+const RAID = { members: [], focus: 0, primary: 0, dir: '/', add: false };
+
+const raidBlank = () => ({ path: '', offset: '', missing: false });
+const raidLevel = () => +$('#raid-level').value;
+const raidMin = level => (level === 5 ? 3 : 2);
+
+function raidDialog() {
+  const dlg = $('#dlg-raid');
+  RAID.add = !!S.casePath;
+  RAID.dir = (S.casePath || '').replace(/[\\/][^\\/]*$/, '') || '/';
+  RAID.members = [raidBlank(), raidBlank(), raidBlank()];
+  RAID.focus = 0;
+  RAID.primary = 0;
+  $('#raid-name').value = '';
+  $('#raid-level').value = '5';
+  $('#raid-chunk').innerHTML = RAID_CHUNKS.map(c =>
+    `<option value="${c}"${c === 65536 ? ' selected' : ''}>${
+      fmt.bytes(c)}</option>`).join('')
+    + `<option value="other">${esc(txt('ui.raid.chunk_other'))}</option>`;
+  $('#raid-chunk-custom').value = '';
+  $('#raid-layout').innerHTML = RAID_LAYOUTS.map(l =>
+    `<option value="${l}">${esc(txt('ui.raid.layout_' + l))}</option>`).join('');
+  $('#raid-check').innerHTML = '';
+  const known = examinerName();
+  $('#raid-examiner').value = known || '';
+  $('#raid-examiner-field').hidden = RAID.add && !!known;
+  $('#raid-case-field').hidden = RAID.add;
+  $('#raid-case').value = '';
+  $('#raid-add-note').hidden = !RAID.add;
+  if (RAID.add) {
+    $('#raid-add-note').textContent = txt('ui.raid.add_note', {
+      case: S.casePath.replace(/^.*[\\/]/, ''), exhibits: S.exhibits.length });
+  }
+  raidSync();
+  renderRaidMembers();
+  browse(RAID.dir, { into: '#raid-browser', target: '#raid-pick',
+                     kind: 'any', onPick: raidPicked,
+                     onDir: d => { RAID.dir = d; } });
+  dlg.showModal();
+}
+
+// What applies to the chosen level: mirrors have no chunk or layout, only
+// RAID 5 has a layout, and a set needs enough members for its level.
+function raidSync() {
+  const level = raidLevel();
+  $('#raid-chunk-field').hidden = level === 1;
+  $('#raid-layout-field').hidden = level !== 5;
+  $('#raid-chunk-custom').hidden = $('#raid-chunk').value !== 'other';
+  $('#raid-layout-hint').textContent = txt('ui.raid.layout_hint_' + level);
+  while (RAID.members.length < raidMin(level)) RAID.members.push(raidBlank());
+  if (level === 0) RAID.members.forEach(m => { m.missing = false; });
+}
+
+function raidPicked(path) {
+  const m = RAID.members[RAID.focus];
+  if (!m) return;
+  m.path = path;
+  m.missing = false;
+  if (!$('#raid-name').value.trim()) {
+    $('#raid-name').value = path.replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '')
+      .replace(/[-_ ]*\d+$/, '') || path.replace(/^.*[\\/]/, '');
+  }
+  const next = RAID.members.findIndex((x, i) => i > RAID.focus && !x.path
+                                                 && !x.missing);
+  if (next >= 0) RAID.focus = next;
+  renderRaidMembers();
+}
+
+function renderRaidMembers() {
+  const level = raidLevel();
+  const box = $('#raid-members');
+  const n = RAID.members.length;
+  box.innerHTML = RAID.members.map((m, i) => `
+    <div class="raid-row${i === RAID.focus ? ' is-focus' : ''}" data-i="${i}">
+      <span class="raid-slot">${esc(txt('ui.raid.member', { n: i + 1 }))}</span>
+      <input type="text" data-k="path" value="${esc(m.path)}"
+        aria-label="${esc(txt('ui.raid.member_path'))}"
+        ${m.missing ? 'disabled' : ''}>
+      <input type="text" data-k="offset" size="9" value="${esc(m.offset)}"
+        placeholder="0" title="${esc(txt('ui.raid.member_offset_title'))}"
+        aria-label="${esc(txt('ui.raid.member_offset'))}">
+      ${level !== 0 ? `<label class="check" title="${
+        esc(txt('ui.raid.missing_title'))}"><input type="checkbox"
+        data-k="missing" ${m.missing ? 'checked' : ''}><span>${
+        esc(txt('ui.raid.missing'))}</span></label>` : ''}
+      ${level === 1 ? `<label class="check" title="${
+        esc(txt('ui.raid.read_from_title'))}"><input type="radio"
+        name="raid-primary" data-k="primary" ${i === RAID.primary ? 'checked' : ''}
+        ${m.missing ? 'disabled' : ''}><span>${
+        esc(txt('ui.raid.read_from'))}</span></label>` : ''}
+      <span class="raid-move">
+        <button type="button" class="ghost" data-up ${i ? '' : 'disabled'}
+          title="${esc(txt('ui.raid.up'))}">↑</button>
+        <button type="button" class="ghost" data-down ${i < n - 1 ? '' : 'disabled'}
+          title="${esc(txt('ui.raid.down'))}">↓</button>
+        <button type="button" class="ghost" data-remove
+          ${n > raidMin(level) ? '' : 'disabled'}
+          title="${esc(txt('ui.raid.remove'))}">✕</button>
+      </span>
+    </div>`).join('');
+  $$('#raid-members .raid-row').forEach(row => {
+    const i = +row.dataset.i;
+    const m = RAID.members[i];
+    const focus = () => {
+      RAID.focus = i;
+      $$('#raid-members .raid-row').forEach(r =>
+        r.classList.toggle('is-focus', +r.dataset.i === i));
+    };
+    row.addEventListener('focusin', focus);
+    row.addEventListener('click', focus);
+    row.querySelector('[data-k="path"]').addEventListener('input', e => {
+      m.path = e.target.value;
+    });
+    row.querySelector('[data-k="offset"]').addEventListener('input', e => {
+      m.offset = e.target.value;
+    });
+    row.querySelector('[data-k="missing"]')?.addEventListener('change', e => {
+      m.missing = e.target.checked;
+      if (m.missing && RAID.primary === i) {
+        RAID.primary = RAID.members.findIndex(x => !x.missing);
+      }
+      renderRaidMembers();
+    });
+    row.querySelector('[data-k="primary"]')?.addEventListener('change', () => {
+      RAID.primary = i;
+    });
+    const move = by => {
+      const j = i + by;
+      if (j < 0 || j >= RAID.members.length) return;
+      [RAID.members[i], RAID.members[j]] = [RAID.members[j], RAID.members[i]];
+      if (RAID.primary === i) RAID.primary = j;
+      else if (RAID.primary === j) RAID.primary = i;
+      RAID.focus = j;
+      renderRaidMembers();
+    };
+    row.querySelector('[data-up]').addEventListener('click', () => move(-1));
+    row.querySelector('[data-down]').addEventListener('click', () => move(1));
+    row.querySelector('[data-remove]').addEventListener('click', () => {
+      RAID.members.splice(i, 1);
+      RAID.focus = Math.min(RAID.focus, RAID.members.length - 1);
+      RAID.primary = Math.min(RAID.primary, RAID.members.length - 1);
+      renderRaidMembers();
+    });
+  });
+}
+
+// The definition as the form has it, or an error naming what is missing; the
+// engine checks the rest and answers with a message for anything it refuses.
+function raidDefinition() {
+  const level = raidLevel();
+  const members = [];
+  for (const [i, m] of RAID.members.entries()) {
+    const path = m.missing ? null : m.path.trim();
+    if (!m.missing && !path) {
+      return { error: txt('ui.raid.member_no_path', { n: i + 1 }) };
+    }
+    const off = m.offset.trim() ? tplNumber(m.offset) : 0;
+    members.push({ path: path || null, offset: off });
+  }
+  const d = { name: $('#raid-name').value, level, members };
+  if (level !== 1) {
+    d.chunk = $('#raid-chunk').value === 'other'
+      ? tplNumber($('#raid-chunk-custom').value) : +$('#raid-chunk').value;
+  }
+  if (level === 5) d.layout = $('#raid-layout').value;
+  if (level === 1) d.primary = RAID.primary;
+  return { definition: d };
+}
+
+async function raidCheck() {
+  const box = $('#raid-check');
+  const got = raidDefinition();
+  if (got.error) { box.innerHTML = `<p class="is-warn">${esc(got.error)}</p>`; return null; }
+  box.innerHTML = `<p class="hint">${esc(txt('ui.raid.checking'))}</p>`;
+  const r = await api.post('raid/check', { definition: got.definition })
+    .catch(() => null);
+  if (!r || r.error) {
+    box.innerHTML = `<p class="is-warn">${esc(r?.error || '')}${
+      r?.advice ? ' ' + esc(r.advice) : ''}</p>`;
+    return null;
+  }
+  const scheme = ['MBR', 'GPT'].includes(r.scheme) ? r.scheme : null;
+  const found = r.recognised || !!scheme;
+  const what = [scheme, ...r.volumes.filter(v => v.fs).map(v =>
+    `${v.fs} at 0x${fmt.hex(v.offset, 8)}`)].filter(Boolean).join(', ');
+  box.innerHTML = `
+    <div class="results-head">${esc(txt('ui.raid.result_heading', {
+      format: r.info.format, size: fmt.bytes(r.info.size) }))}</div>
+    ${(r.info.findings || []).map(f => `<p class="hint is-warn">${esc(f)}</p>`).join('')}
+    <p class="hint${found ? '' : ' is-warn'}">${esc(
+      found ? txt('ui.raid.recognised', { what })
+            : txt('ui.raid.not_recognised'))}</p>`;
+  return got.definition;
+}
+
+async function raidAssemble() {
+  const def = await raidCheck();
+  if (!def) return;
+  let casePath = null;
+  if (!RAID.add) {
+    casePath = $('#raid-case').value.trim();
+    if (!casePath) {
+      const first = def.members.find(m => m.path);
+      casePath = first.path.replace(/[\\/][^\\/]*$/, '') + '/'
+        + (def.name.replace(/[^\w.-]+/g, '_') || 'raid') + '.strata';
+      $('#raid-case').value = casePath;
+    }
+  }
+  const examiner = $('#raid-examiner').value.trim() || examinerName();
+  $('#dlg-raid').close();
+  busy.open(txt('ui.raid.assembling'), def.name);
+  busy.waiting(txt('ui.raid.assembling_detail'));
+  let r;
+  try {
+    r = await api.post('raid/open', { definition: def, examiner,
+                                      case: casePath, add: RAID.add });
+    if (r.error) return toast(r.error);
+    adoptOpened(r);
+    for (const [label, fn] of OPEN_STAGES) {
+      busy.waiting(label);
+      await fn();
+    }
+  } finally {
+    busy.close();
+  }
+  pollTasks();
+  loadSavedArtefacts();
+  loadTimezone(true);
+}
+
+$('#open-raid')?.addEventListener('click', () => {
+  $('#dlg-open').close();
+  raidDialog();
+});
+$('#raid-level')?.addEventListener('change', () => { raidSync(); renderRaidMembers(); });
+$('#raid-chunk')?.addEventListener('change', raidSync);
+$('#raid-add-member')?.addEventListener('click', () => {
+  RAID.members.push(raidBlank());
+  RAID.focus = RAID.members.length - 1;
+  renderRaidMembers();
+});
+$('#raid-cancel')?.addEventListener('click', () => $('#dlg-raid').close());
+$('#raid-test')?.addEventListener('click', raidCheck);
+$('#raid-open')?.addEventListener('click', raidAssemble);
+
 function openDialog({ add = false, kind = 'image' } = {}) {
   const dlg = $('#dlg-open');
   dlg.dataset.add = add ? '1' : '';
@@ -9729,6 +9994,14 @@ function recentFlag(c) {
   return '';
 }
 
+// A RAID set has no file of its own: the case row shows the files it is made
+// of, in the order they are in the set.
+function raidMembersLine(e) {
+  let list = [];
+  try { list = JSON.parse(e.parents || '[]'); } catch { /* shown as none */ }
+  return txt('ui.raid.made_of', { members: list.join(' · ') || '—' });
+}
+
 function evidenceRow(e, openIds) {
   const isActive = e.id === S.activeId;
   const isOpen = openIds.has(e.id);
@@ -9746,7 +10019,7 @@ function evidenceRow(e, openIds) {
         ${state}${verified}
         <span class="off">${fmt.bytes(e.size)}</span>
       </div>
-      <div class="sub">${esc(e.path)}</div>
+      <div class="sub">${esc(e.kind === 'raid' ? raidMembersLine(e) : e.path)}</div>
       <button class="linkish" data-remove="${e.id}">${txt('ui.cases.remove')}</button>
     </div>`;
 }

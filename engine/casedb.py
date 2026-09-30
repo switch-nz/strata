@@ -20,9 +20,11 @@ CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY, value TEXT);
 
 -- `parents` is the other disks an exhibit reads through (a differencing
--- VHD's parents, nearest first) as a JSON list of paths. What the exhibit
--- shows is only meaningful with them, so the case records which files they
--- were; NULL where there are none, or before this was recorded.
+-- VHD's parents, nearest first, or a RAID set's members) as a JSON list of
+-- paths. What the exhibit shows is only meaningful with them, so the case
+-- records which files they were; NULL where there are none, or before this
+-- was recorded. `definition` is what a RAID set is made of (level, chunk,
+-- layout, members in slot order) as JSON; NULL for every other exhibit.
 CREATE TABLE IF NOT EXISTS evidence (
     id INTEGER PRIMARY KEY,
     path TEXT NOT NULL,
@@ -36,7 +38,8 @@ CREATE TABLE IF NOT EXISTS evidence (
     verified_at TEXT,
     kind TEXT,
     added_at TEXT NOT NULL,
-    parents TEXT);
+    parents TEXT,
+    definition TEXT);
 
 CREATE TABLE IF NOT EXISTS bookmarks (
     id INTEGER PRIMARY KEY,
@@ -550,6 +553,7 @@ class Case:
         self._migrate_bookmark_frame()
         self._migrate_evidence_kind()
         self._migrate_evidence_parents()
+        self._migrate_evidence_definition()
         self._migrate_tagged_items()
         self.index_reset = False
         self.index_db = None
@@ -595,6 +599,12 @@ class Case:
                             (infer_kind(row["path"], row["format"]),
                              row["id"]))
         self.db.commit()
+
+    def _migrate_evidence_definition(self):
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(evidence)")}
+        if "definition" not in cols:
+            self.db.execute("ALTER TABLE evidence ADD COLUMN definition TEXT")
+            self.db.commit()
 
     def _migrate_evidence_parents(self):
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(evidence)")}
@@ -1189,7 +1199,8 @@ class Case:
         return {"intact": True, "broken_at": None}
 
     @_writes
-    def add_evidence(self, path, info, label=None, parents=None):
+    def add_evidence(self, path, info, label=None, parents=None,
+                     definition=None):
         parents = [str(p) for p in (parents or [])]
         blob = json.dumps(parents) if parents else None
         row = self.db.execute("SELECT id, parents FROM evidence WHERE path=?",
@@ -1204,16 +1215,21 @@ class Case:
                                               "parents": parents})
             return row["id"]
         kind = (info.get("kind") or "file") if info.get("logical") else "image"
+        if definition is not None:
+            kind = "raid"
         cur = self.db.execute(
             "INSERT INTO evidence (path,label,format,size,stored_md5,stored_sha1,"
-            "kind,added_at,parents) VALUES (?,?,?,?,?,?,?,?,?)",
+            "kind,added_at,parents,definition) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (path, label or os.path.basename(path), info.get("format"),
              info.get("size"), info.get("stored_md5"), info.get("stored_sha1"),
-             kind, utcnow(), blob))
+             kind, utcnow(), blob,
+             json.dumps(definition, sort_keys=True)
+             if definition is not None else None))
         self.db.commit()
         self.log("evidence.add", {"path": path, "size": info.get("size"),
                                   "stored_md5": info.get("stored_md5"),
-                                  "parents": parents or None})
+                                  "parents": parents or None,
+                                  "raid": definition})
         return cur.lastrowid
 
     @staticmethod
@@ -1238,6 +1254,17 @@ class Case:
             if mine & self._chain_of(row["path"], row["parents"]):
                 related.add(row["id"])
         return related
+
+    def evidence_definition(self, path):
+        """The RAID definition stored for an exhibit, or None."""
+        row = self.db.execute("SELECT definition FROM evidence WHERE path=?",
+                              (path,)).fetchone()
+        try:
+            got = json.loads(row["definition"]) if row and row["definition"] \
+                else None
+        except ValueError:
+            return None
+        return got if isinstance(got, dict) else None
 
     def evidence_kind(self, path):
         row = self.db.execute("SELECT * FROM evidence WHERE path=?",

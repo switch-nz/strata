@@ -30,11 +30,12 @@ _COLS = ("mft", "parent", "name", "is_dir", "deleted", "size", "created",
          "modified", "accessed", "mft_modified", "fn_created", "fn_modified",
          "resident", "fixup_ok", "streams")
 
-def stamp(image_path, offset, snap=None, parents=()):
+def stamp(image_path, offset, snap=None, parents=(), extra=""):
     """What a cached tree was built from. A differencing disk shows mostly
     what its parents hold, so each parent (nearest first) is part of the
     stamp: replacing one, even keeping its identifier, discards the cache.
-    A disk with no parents stamps exactly as before."""
+    A disk with no parents stamps exactly as before. `extra` is anything else
+    the tree depends on, such as how a RAID set's members were put together."""
     try:
         st = os.stat(image_path)
     except OSError:
@@ -47,6 +48,8 @@ def stamp(image_path, offset, snap=None, parents=()):
             out += "|%d:%d" % (ps.st_size, int(ps.st_mtime))
         except OSError:
             out += "|missing"       # a parent that is gone is a change too
+    if extra:
+        out += "|" + extra
     return out
 
 PREFIX = "mft-"

@@ -58,7 +58,17 @@ recognised and refused by name today; these entries are about *reading* it.
       deliberately not matched by signature, since refusing every ordinary
       archive to catch one image format would be wrong far more often than
       right.
-- [ ] **RAID** reassembly (0 / 1 / 5) from member images.
+- [~] **RAID** reassembly (0 / 1 / 5) from member images. An "Assemble RAID
+      set" dialog takes the level, chunk size, RAID 5 layout (Linux md's four),
+      the members in slot order and each member's data offset; the definition
+      is stored in the case and the set is assembled again from it. RAID 5 is
+      read with one member missing (rebuilt by XOR, and said so); mirrors and
+      RAID 5 parity are compared on Verify and reported as observed, not as a
+      verdict. Verified only against synthetic sets built from the layout
+      diagrams; sets written by real controllers and by mdadm still need
+      checking. Not done: reading the parameters from mdadm or controller
+      metadata, suggesting parameters for an unknown set, RAID 6 / 10 /
+      concatenation, nested sets, and LVM or dynamic disks.
 
 ### Shadow copies
 
