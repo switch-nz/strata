@@ -107,6 +107,10 @@ def _stretched_protector(guid, ptype, initial, salt, nonce):
 
 
 def _password_initial(secret):
+    """The exact inverse of bitlocker.py's own password digest -- not a
+    hashing scheme chosen for this fixture, but BitLocker's documented
+    pre-stretch digest, which the fixture must reproduce to be unlocked by
+    the code under test."""
     return hashlib.sha256(
         hashlib.sha256(secret.encode("utf-16-le")).digest()).digest()
 
@@ -141,6 +145,103 @@ def _xts_encrypt_sector(key1, key2, sector, data):
         out += aes_mod._xor(c1.encrypt_block(aes_mod._xor(blk, tweak)), tweak)
         tweak = aes_mod._gf_mul_alpha(tweak)
     return bytes(out)
+
+
+DIFFUSER_METHOD = 0x8000  # AES-CBC 128 with Elephant diffuser
+DIFFUSER_KEY_BYTES = 16
+# Each component sits in its own fixed 256-bit (32-byte) slot regardless of
+# the actual AES key size -- see bitlocker.py's _keys(), verified against
+# dislocker's dis_crypt_set_fvekey(). Bytes past the first
+# DIFFUSER_KEY_BYTES of each slot are unused padding.
+DIFFUSER_FVEK = (b"\x11" * DIFFUSER_KEY_BYTES + b"\x00" * (32 - DIFFUSER_KEY_BYTES) +
+                 b"\x22" * DIFFUSER_KEY_BYTES + b"\x00" * (32 - DIFFUSER_KEY_BYTES))
+
+
+def _cbc_encrypt(key, iv, data):
+    """The exact inverse of engine.crypto.aes._cbc_decrypt_py."""
+    a = key if isinstance(key, AES) else AES(key)
+    out = bytearray()
+    prev = iv
+    for i in range(0, len(data), 16):
+        enc = a.encrypt_block(aes_mod._xor(data[i:i + 16], prev))
+        out += enc
+        prev = enc
+    return bytes(out)
+
+
+def _diffuser_encrypt_pass(d, n, cycles, rot, near, far):
+    """The exact inverse of bitlocker_mod._diffuser_pass -- reverse
+    iteration order, subtract instead of add (whitepaper section 4.4)."""
+    for _ in range(cycles):
+        for i in range(n - 1, -1, -1):
+            d[i] = (d[i] - (d[(i + near) % n]
+                    ^ bitlocker_mod._rotl32(d[(i + far) % n], rot[i % 4]))) & 0xFFFFFFFF
+    return d
+
+
+def _diffuser_encrypt_sector(k1, ksec, offset, sector_size, plain):
+    """Mirrors bitlocker.diffuser_decrypt: XOR sector key -> A diffuser ->
+    B diffuser -> AES-CBC encrypt (whitepaper figure 1, reversed for
+    decryption)."""
+    n = sector_size // 4
+    ks = struct.unpack("<%dI" % n,
+                        bitlocker_mod._sector_key(ksec, offset, sector_size))
+    d = [x ^ k for x, k in zip(struct.unpack("<%dI" % n, plain), ks)]
+    d = _diffuser_encrypt_pass(d, n, bitlocker_mod._DIFFUSER_A_CYCLES,
+                                bitlocker_mod._DIFFUSER_A_ROT, -2, -5)
+    d = _diffuser_encrypt_pass(d, n, bitlocker_mod._DIFFUSER_B_CYCLES,
+                                bitlocker_mod._DIFFUSER_B_ROT, 2, 5)
+    diffused = struct.pack("<%dI" % n, *d)
+    iv = k1.encrypt_block(struct.pack("<Q", offset) + b"\x00" * 8)
+    return _cbc_encrypt(k1, iv, diffused)
+
+
+def build_diffuser_volume():
+    """A minimal single-protector (password) BitLocker volume using
+    AES-128-CBC with the Elephant diffuser (method 0x8000), so unlock()'s
+    own verify() step exercises a real encrypt/decrypt round trip through
+    diffuser_decrypt."""
+    guid_password = uuid.UUID("00000000-0000-0000-0000-000000000005")
+
+    protectors = _stretched_protector(guid_password, 0x2000,
+                                       _password_initial(PASSWORD),
+                                       b"\x06" * 16, b"\x06" * 12)
+    fvek_entry = _entry(bitlocker_mod.ENTRY_FVEK, bitlocker_mod.VALUE_AES_CCM,
+                         _wrapped(VMK, b"\x07" * 12, DIFFUSER_METHOD, DIFFUSER_FVEK))
+    volume_header_entry = _entry(
+        bitlocker_mod.ENTRY_VOLUME_HEADER, bitlocker_mod.VALUE_OFFSET_SIZE,
+        struct.pack("<QQ", VH_OFF, SECTOR_SIZE))
+
+    entries = protectors + fvek_entry + volume_header_entry
+    meta_size = 48 + len(entries)
+    metadata_header = struct.pack("<4I", meta_size, 1, 48, meta_size) \
+        + VOLUME_ID.bytes_le + struct.pack("<I", 0) \
+        + struct.pack("<I", DIFFUSER_METHOD) + struct.pack("<Q", 0)
+    block_header = bitlocker_mod.SIGNATURE + struct.pack("<HH", 0, 1) \
+        + b"\x00" * 52
+    metadata_block = block_header + metadata_header + entries
+    assert len(metadata_block) <= 4096
+
+    image = bytearray(IMAGE_SIZE)
+    header = bytearray(SECTOR_SIZE)
+    header[3:11] = bitlocker_mod.SIGNATURE
+    struct.pack_into("<H", header, 0x0B, SECTOR_SIZE)
+    header[0xA0:0xB0] = bitlocker_mod.GUID_WIN7.bytes_le
+    struct.pack_into("<3Q", header, 0xB0, META_OFF, META_OFF, META_OFF)
+    header[510:512] = b"\x55\xAA"
+    image[0:SECTOR_SIZE] = header
+    image[META_OFF:META_OFF + len(metadata_block)] = metadata_block
+
+    ntfs_sector = bytearray(SECTOR_SIZE)
+    ntfs_sector[3:11] = b"NTFS    "
+    ntfs_sector[510:512] = b"\x55\xAA"
+    k1 = AES(DIFFUSER_FVEK[:DIFFUSER_KEY_BYTES])
+    ksec = AES(DIFFUSER_FVEK[0x20:0x20 + DIFFUSER_KEY_BYTES])
+    ciphertext = _diffuser_encrypt_sector(k1, ksec, VH_OFF, SECTOR_SIZE,
+                                          bytes(ntfs_sector))
+    image[VH_OFF:VH_OFF + SECTOR_SIZE] = ciphertext
+
+    return bytes(image)
 
 
 def build_bitlocker_volume(include_clear=True):

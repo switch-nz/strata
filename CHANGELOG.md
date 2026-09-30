@@ -29,6 +29,10 @@ records, not how the code changed.
   Tested on synthetic sets only; the members can be raw images or any other
   image format Strata reads.
 
+- **BitLocker volumes encrypted with the Elephant diffuser.** Vista and
+  Windows 7 volumes using AES-CBC with the Elephant diffuser (encryption
+  methods 0x8000/0x8001) are now decrypted, not just identified. Previously
+  these volumes were refused outright.
 - **A template editor for on-disk structures.** A new Templates tab lets an
   examiner define a structure without writing code: a name, and rows of
   offset, size, name, kind (little-endian integers, hex, signature, ASCII,
@@ -52,7 +56,6 @@ records, not how the code changed.
   only", since both together could match nothing). A filter that is
   misspelt or could not match anything is now refused with the reason,
   instead of silently matching everything.
-
 - **QCOW2 and VirtualBox VDI disk images can be opened.** Both were refused
   by name before. QCOW2 (versions 2 and 3, including compressed clusters) and
   VDI (dynamic and fixed) are read like any other disk, with unwritten space

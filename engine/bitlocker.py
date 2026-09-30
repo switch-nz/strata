@@ -93,6 +93,12 @@ def _entries(data, pos, end, depth=0):
     return out
 
 def _stretch(initial, salt, progress=None):
+    # This is BitLocker's own documented key-stretching algorithm (FVE
+    # "chained hash"), not a scheme chosen here -- it must be reproduced
+    # exactly, SHA256 and all, to unwrap a real volume's VMK. A code
+    # scanner flagging bare SHA256 for password hashing doesn't apply: the
+    # 2**20 chained rounds below are the actual KDF, and there is no
+    # stronger substitute that would still open a real BitLocker volume.
     last = b"\x00" * 32
     step = STRETCH_ROUNDS // 100
     for i in range(STRETCH_ROUNDS):
@@ -155,12 +161,47 @@ def _recovery_digits(s):
         out += struct.pack("<H", q)
     return bytes(out)
 
+# Elephant diffuser (AES-CBC + diffuser, BitLocker Vista/Win7 methods
+# 0x8000/0x8001) -- constants and formulas verified against Niels Ferguson's
+# "AES-CBC + Elephant diffuser" whitepaper (Microsoft, 2006), section 4.
+# Encrypt pipeline: plaintext XOR sector-key -> A diffuser -> B diffuser ->
+# AES-CBC. Decrypt is the mirror: AES-CBC decrypt (done by the caller) ->
+# B diffuser -> A diffuser -> XOR sector-key.
+_DIFFUSER_A_ROT = (9, 0, 13, 0)
+_DIFFUSER_B_ROT = (0, 10, 0, 25)
+_DIFFUSER_A_CYCLES = 5
+_DIFFUSER_B_CYCLES = 3
+
+def _rotl32(x, n):
+    return ((x << n) | (x >> (32 - n))) & 0xFFFFFFFF if n else x
+
+def _diffuser_pass(d, n, cycles, rot, near, far):
+    for _ in range(cycles):
+        for i in range(n):
+            d[i] = (d[i] + (d[(i + near) % n]
+                            ^ _rotl32(d[(i + far) % n], rot[i % 4]))) & 0xFFFFFFFF
+    return d
+
+def _sector_key(ksec, offset, sector_size):
+    """Ks := E(Ksec, e(s)) || E(Ksec, e'(s)), repeated to the sector size and
+    xorred into the plaintext. e(s) is the same 16-byte offset encoding used
+    for the AES-CBC IV; e'(s) is the same but with its last byte forced to
+    0x80 (whitepaper section 4.3)."""
+    e = struct.pack("<Q", offset) + b"\x00" * 8
+    e2 = e[:15] + b"\x80"
+    block = ksec.encrypt_block(e) + ksec.encrypt_block(e2)
+    return (block * (sector_size // len(block) + 1))[:sector_size]
+
 def diffuser_decrypt(data, tweak_key, offset, sector_size):
     if not tweak_key:
         raise Unsupported(
             _t("bitlocker.volume_uses_elephant_diffuser"))
-    raise Unsupported(
-        _t("bitlocker.elephant_diffuser_support_implemented"))
+    n = sector_size // 4
+    d = list(struct.unpack("<%dI" % n, data))
+    d = _diffuser_pass(d, n, _DIFFUSER_B_CYCLES, _DIFFUSER_B_ROT, 2, 5)
+    d = _diffuser_pass(d, n, _DIFFUSER_A_CYCLES, _DIFFUSER_A_ROT, -2, -5)
+    ks = struct.unpack("<%dI" % n, _sector_key(tweak_key, offset, sector_size))
+    return struct.pack("<%dI" % n, *(x ^ k for x, k in zip(d, ks)))
 
 class Protector:
 
@@ -406,6 +447,9 @@ class BitLocker:
                 return None
             initial = bek_key
         else:
+            # The double-SHA256 digest BitLocker itself derives from a typed
+            # password, before _stretch() does the actual, expensive KDF
+            # work. Reproduced exactly for the same reason as _stretch().
             initial = hashlib.sha256(
                 hashlib.sha256(secret.encode("utf-16-le")).digest()).digest()
 
@@ -452,6 +496,17 @@ class BitLocker:
         n = self.key_bytes
         if self.mode == "xts":
             return aes.AES(self.fvek[:n]), aes.AES(self.fvek[n:n * 2])
+        if self.mode == "cbc-diffuser":
+            # Unlike XTS, the two components are NOT packed tightly: each
+            # sits in its own fixed 256-bit (32-byte) slot regardless of the
+            # actual AES key size, so AES-128-diffuser leaves 16 unused
+            # bytes at the end of each slot. Verified against dislocker's
+            # dis_crypt_set_fvekey() (src/encryption/encommon.c), which
+            # reads the tweak key from a hardcoded fvekey+0x20 for both
+            # AES-128-diffuser and AES-256-diffuser -- matching the
+            # whitepaper's "both components are provided with 256 bits of
+            # key material... some of the key bits may go unused" (4.1).
+            return aes.AES(self.fvek[:n]), aes.AES(self.fvek[0x20:0x20 + n])
         return aes.AES(self.fvek[:n]), None
 
     def decrypt_sector(self, offset, data):
@@ -462,8 +517,7 @@ class BitLocker:
         iv = k1.encrypt_block(struct.pack("<Q", offset) + b"\x00" * 8)
         plain = aes.cbc_decrypt(k1, iv, data)
         if self.mode == "cbc-diffuser":
-            plain = diffuser_decrypt(plain, self.tweak_key, offset,
-                                     self.sector_size)
+            plain = diffuser_decrypt(plain, k2, offset, self.sector_size)
         return plain
 
     def _cached_keys(self):

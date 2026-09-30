@@ -11,7 +11,6 @@
   "ad1.segment_d_d_open": "This is segment %d of %d. Open the first segment; the rest are found beside it.",
   "ad1.segment_header_ad1_but": "The segment header is an AD1 but no logical image follows it at offset 0x%X.",
   "ad1.segment_header_length_d": "The segment header length (%d) is not usable.",
-  "bitlocker.elephant_diffuser_support_implemented": "Elephant diffuser support is not implemented. Vista and Windows 7 volumes encrypted with it are identified but not decrypted.",
   "bitlocker.encryption_key_entry_metadata": "No encryption key entry in the metadata.",
   "bitlocker.encryption_method_x_x": "Encryption method 0x%04X is not supported; the volume will not be decrypted rather than decrypted wrongly.",
   "bitlocker.incorrect": "Incorrect %s.",

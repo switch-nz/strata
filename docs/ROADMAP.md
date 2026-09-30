@@ -92,8 +92,12 @@ recognised and refused by name today; these entries are about *reading* it.
       against an independent tool); a real `.BEK` file and a real
       clear-key volume from actual Windows-run BitLocker still need to be
       confirmed before this can be called done.
-- [ ] **BitLocker with the Elephant diffuser** — Vista and Windows 7 volumes
-      are identified and refused rather than decrypted wrongly.
+- [~] **BitLocker with the Elephant diffuser** — Vista and Windows 7 volumes
+      (encryption methods 0x8000/0x8001) are decrypted, implemented against
+      Niels Ferguson's "AES-CBC + Elephant diffuser" whitepaper and
+      cross-checked against dislocker's independent implementation; a real
+      diffuser-encrypted volume from actual Windows-run BitLocker still
+      needs to be confirmed before this can be called done.
 - [ ] **LUKS2 with Argon2 against real cryptsetup images** — implemented and
       verified against synthetic images built to cryptsetup's layout; real
       cryptsetup-written volumes still need to be confirmed before this can
