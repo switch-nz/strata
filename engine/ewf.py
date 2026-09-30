@@ -9,6 +9,8 @@ from . import vhdx as vhdx_mod
 from . import vhd as vhd_mod
 from . import ad1 as ad1_mod
 from . import vmdk as vmdk_mod
+from . import vdi as vdi_mod
+from . import qcow2 as qcow2_mod
 from .inflate import DAMAGED, STOPPED, inflate_capped, inflate_ended
 import zlib
 from collections import OrderedDict
@@ -733,10 +735,6 @@ UNSUPPORTED = (
      "its end, where the format keeps the authoritative one. It is most "
      "likely a truncated copy of a dynamic or differencing VHD, or damaged "
      "at the end, so the disk cannot be read. Obtain a complete copy."),
-    (b"QFI\xfb", "QEMU copy-on-write (QCOW/QCOW2)",
-     "QCOW stores data through an indirection table. Convert with qemu-img."),
-    (b"<<< Oracle VM VirtualBox Disk Image >>>", "VirtualBox disk (VDI)",
-     "VDI has its own block map. Convert with VBoxManage or qemu-img."),
     (b"SQLite format 3\x00", "SQLite database",
      "This is a database, not a disk image. Open it from within a "
      "filesystem, where the SQLite viewer will read it."),
@@ -759,9 +757,30 @@ def identify_unsupported(head):
             return fmt, advice
     return None
 
+def _open_owning(path, fh, head):
+    """VDI and QCOW2: the reader takes over `fh` and closes it, also when
+    it refuses the file."""
+    if vdi_mod.looks_like_vdi(head):
+        try:
+            return vdi_mod.VdiImage(path, fh)
+        except vdi_mod.VdiError as exc:
+            raise UnsupportedContainer(_t("ewf.virtualbox_vdi") % exc.message,
+                                       exc.advice)
+    try:
+        return qcow2_mod.Qcow2Image(path, fh)
+    except qcow2_mod.QcowError as exc:
+        raise UnsupportedContainer(_t("ewf.qemu_qcow2") % exc.message,
+                                   exc.advice)
+
 def open_image(path):
     with open(path, "rb") as fh:
-        head = fh.read(64)
+        head = fh.read(128)
+        if vdi_mod.looks_like_vdi(head) or qcow2_mod.looks_like_qcow(head):
+            # These readers take over a duplicate of this handle (and close
+            # it, also when they refuse the file) rather than opening the
+            # path again; each seeks before every read.
+            return _open_owning(path, os.fdopen(os.dup(fh.fileno()), "rb"),
+                                head)
     sig = head[:8]
     if sig in (EVF_SIG, LVF_SIG) or sig == EVF2_SIG:
         return EwfImage(path)

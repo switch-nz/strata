@@ -11,6 +11,19 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+### Added
+
+- **QCOW2 and VirtualBox VDI disk images can be opened.** Both were refused
+  by name before. QCOW2 (versions 2 and 3, including compressed clusters) and
+  VDI (dynamic and fixed) are read like any other disk, with unwritten space
+  reading as zeros and anything odd in the file reported as a finding on the
+  image. A disk that holds only a change from another disk, a QCOW2 with a
+  backing file or a differencing or undo VDI, is refused with the reason
+  rather than shown as though it were whole; so are encrypted QCOW2 disks
+  and the QCOW2 variants Strata cannot read (external data file, subcluster
+  tables, zstd compression). Tested on synthetic images only; DMG and AFF4
+  are still refused.
+
 ### Fixed
 
 - **Sweeping event logs across a volume could use large amounts of memory
