@@ -773,19 +773,14 @@ def _open_owning(path, fh, head):
                                    exc.advice)
 
 def open_image(path):
-    fh = open(path, "rb")
-    try:
+    with open(path, "rb") as fh:
         head = fh.read(128)
-        fh.seek(0)
-        # VDI and QCOW2 take over this handle; every other reader opens
-        # the path itself, so the handle is closed for them.
         if vdi_mod.looks_like_vdi(head) or qcow2_mod.looks_like_qcow(head):
-            img = _open_owning(path, fh, head)
-            fh = None
-            return img
-    finally:
-        if fh is not None:
-            fh.close()
+            # These readers take over a duplicate of this handle (and close
+            # it, also when they refuse the file) rather than opening the
+            # path again; each seeks before every read.
+            return _open_owning(path, os.fdopen(os.dup(fh.fileno()), "rb"),
+                                head)
     sig = head[:8]
     if sig in (EVF_SIG, LVF_SIG) or sig == EVF2_SIG:
         return EwfImage(path)
