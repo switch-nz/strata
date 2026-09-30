@@ -150,5 +150,9 @@
   "version.stale": "Strata was updated while it was running. Restart it to use the new version.",
   "volume_encrypted_cannot_opened_image": "This volume is encrypted and cannot be opened from an image.",
   "whole_image_scope_two_readings_same": "The whole image is in scope, so the two readings are the same.",
-  "columns_not_saved": "The column choice could not be saved with the case."
+  "columns_not_saved": "The column choice could not be saved with the case.",
+  "templates_saved": "Template saved.",
+  "templates_deleted": "Template deleted.",
+  "templates_conflict": "Someone else has changed this template. Your edits are still in the form; Discard changes loads their version.",
+  "templates_need_evidence": "Open evidence to try a template on it."
 }

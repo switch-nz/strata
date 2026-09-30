@@ -13,6 +13,18 @@ records, not how the code changed.
 
 ### Added
 
+- **A template editor for on-disk structures.** A new Templates tab lets an
+  examiner define a structure without writing code: a name, and rows of
+  offset, size, name, kind (little-endian integers, hex, signature, ASCII,
+  UTF-16, GUID, raw bytes) and a note. Preview decodes the fields from the
+  evidence at any offset, counted from the image or from a partition, and
+  says which fields ran past the end of the evidence. Templates are kept in
+  the case, under the name of whoever last saved them, so everyone who opens
+  the case sees them. Saving checks every field, names are unique, and an edit
+  made from an out-of-date copy is refused rather than overwriting a
+  colleague's; every save and delete is in the audit log, and a deleted
+  template is kept whole there.
+
 - **The folder listing's columns can be chosen, and search has the rest of
   its filters.** A Columns button on the folder listing shows or hides each
   column (size, extension, signature, created, modified, accessed, MD5,

@@ -3551,6 +3551,7 @@ function switchTo(state, { keepTree = false } = {}) {
   previewNone(txt('messages.select_partition_file'));
   loadMarks();
   loadNotes();
+  loadTemplates();
   refreshIndexState();
   loadTimezone(false);
   const now = (state.evidence || [])
@@ -8644,6 +8645,385 @@ $('#note-body')?.addEventListener('keydown', e => {
 });
 $('#note-show-retracted')?.addEventListener('change', loadNotes);
 
+// Structure templates: rows of (offset, size, name, kind, note) an examiner
+// writes in the interface and keeps in the case. The server validates every
+// field again; this only shapes the form and shows what it sends back.
+const TPL = {
+  case: null, list: [], kinds: [], limits: {},
+  sel: null,          // a saved template's id, 'new', or null
+  draft: null,        // {name, description, fields: [{offset, size, ...}]}
+  revision: null,     // the saved revision the draft started from
+  dirty: false, error: '', preview: null, previewAt: '', previewBase: 0,
+};
+
+const TPL_FIXED = { u8: 1, u16: 2, u32: 4, u64: 8, i8: 1, i16: 2, i32: 4,
+                    i64: 8, guid: 16 };
+
+const tplBlankField = () => ({ offset: '', size: '', name: '', kind: 'u32',
+                               note: '' });
+
+function tplDraftFrom(t) {
+  return {
+    name: t.name, description: t.description || '',
+    fields: t.fields.map(f => ({ offset: String(f.offset),
+                                 size: String(f.size), name: f.name,
+                                 kind: f.kind, note: f.note || '' })),
+  };
+}
+
+// "28", "0x1C" or "1C" (with an 0x) as a whole number; anything else is null,
+// which the server answers with a message naming the field.
+function tplNumber(text) {
+  const t = String(text ?? '').trim();
+  if (/^0x[0-9a-f]+$/i.test(t)) return parseInt(t, 16);
+  if (/^\d+$/.test(t)) return parseInt(t, 10);
+  return null;
+}
+
+function tplBody() {
+  const d = TPL.draft;
+  return {
+    name: d.name, description: d.description,
+    fields: d.fields.map(f => ({ offset: tplNumber(f.offset),
+                                 size: tplNumber(f.size), name: f.name,
+                                 kind: f.kind, note: f.note })),
+  };
+}
+
+const tplSelected = () => TPL.list.find(t => t.id === TPL.sel) || null;
+
+async function loadTemplates() {
+  if (!S.casePath) {
+    Object.assign(TPL, { case: null, list: [], sel: null, draft: null,
+                         revision: null, dirty: false, error: '',
+                         preview: null });
+    return renderTemplates();
+  }
+  const r = await api.get('case/templates').catch(() => null);
+  if (!r || r.error) {
+    TPL.error = r?.error || '';
+    return renderTemplates();
+  }
+  if (TPL.case && TPL.case !== r.case) {
+    Object.assign(TPL, { sel: null, draft: null, revision: null,
+                         dirty: false, preview: null });
+  }
+  TPL.case = r.case;
+  TPL.list = r.templates || [];
+  TPL.kinds = r.kinds || [];
+  TPL.limits = r.limits || {};
+  TPL.error = '';
+  // What is being edited was deleted elsewhere: keep the form so the work
+  // is not lost, but it can only be saved as a new template.
+  if (TPL.sel !== null && TPL.sel !== 'new' && !tplSelected()) {
+    TPL.sel = 'new';
+    TPL.revision = null;
+  }
+  renderTemplates();
+}
+
+function tplDiscardOk() {
+  return !TPL.dirty || window.confirm(txt('ui.templates.confirm_discard'));
+}
+
+function tplChoose(id) {
+  if (id === TPL.sel && TPL.draft) return;
+  if (!tplDiscardOk()) return;
+  const t = id === 'new' ? null : TPL.list.find(x => x.id === id);
+  TPL.sel = t ? t.id : 'new';
+  TPL.draft = t ? tplDraftFrom(t)
+    : { name: '', description: '', fields: [tplBlankField()] };
+  TPL.revision = t ? t.revision : null;
+  TPL.dirty = false;
+  TPL.preview = null;
+  renderTemplates();
+}
+
+function tplKindOptions(cur) {
+  const ints = TPL.kinds.filter(k => k in TPL_FIXED && k !== 'guid');
+  const rest = TPL.kinds.filter(k => !ints.includes(k));
+  const opt = k => `<option value="${esc(k)}"${k === cur ? ' selected' : ''}>${
+    esc(k)}</option>`;
+  return `<optgroup label="${esc(txt('ui.templates.kind_group_int'))}">${
+    ints.map(opt).join('')}</optgroup><optgroup label="${
+    esc(txt('ui.templates.kind_group_other'))}">${rest.map(opt).join('')}</optgroup>`;
+}
+
+function renderTemplates() {
+  const list = $('#tpl-list');
+  const ed = $('#tpl-editor');
+  const out = $('#tpl-results');
+  if (!list || !ed || !out) return;
+  $('#btn-tpl-new').disabled = !S.casePath;
+  if (!S.casePath) {
+    list.innerHTML = '';
+    ed.innerHTML = `<p class="empty">${esc(txt('ui.templates.no_case'))}</p>`;
+    out.innerHTML = '';
+    return;
+  }
+  if (TPL.error) {
+    ed.innerHTML = `<p class="empty">${esc(TPL.error)}</p>`;
+    return;
+  }
+  list.innerHTML = TPL.list.length
+    ? `<div class="tpl-items" role="listbox" aria-label="${
+        esc(txt('ui.templates.list_label'))}">${TPL.list.map(t => `
+        <button class="tpl-item${t.id === TPL.sel ? ' is-on' : ''}${
+          t.damaged ? ' is-bad' : ''}" data-id="${t.id}" role="option"
+          aria-selected="${t.id === TPL.sel}">${esc(t.name)}${
+          t.damaged ? ' ⚠' : ''}</button>`).join('')}</div>`
+    : `<p class="empty">${esc(txt('ui.templates.none'))}</p>`;
+  $$('#tpl-list .tpl-item').forEach(b =>
+    b.addEventListener('click', () => tplChoose(+b.dataset.id)));
+
+  const d = TPL.draft;
+  if (!d) {
+    ed.innerHTML = '';
+    out.innerHTML = `<p class="empty">${esc(txt('ui.templates.preview_empty'))}</p>`;
+    return;
+  }
+  const saved = tplSelected();
+  const max = TPL.limits;
+  const meta = saved
+    ? `<p class="hint">${esc(txt('ui.templates.saved_by', {
+        who: saved.examiner || '—', when: fmt.time(saved.updated_at),
+        revision: saved.revision }))}</p>` : '';
+  const damaged = saved?.damaged
+    ? `<p class="hint is-warn">${esc(txt('ui.templates.damaged',
+        { why: saved.damaged }))}</p>` : '';
+  ed.innerHTML = `
+    ${meta}${damaged}
+    <label class="field"><span>${esc(txt('ui.templates.name'))}</span>
+      <input type="text" id="tpl-name" maxlength="${max.name || 80}"
+             value="${esc(d.name)}"></label>
+    <label class="field"><span>${esc(txt('ui.templates.description'))}</span>
+      <textarea id="tpl-desc" rows="2"
+        maxlength="${max.description || 500}">${esc(d.description)}</textarea></label>
+    <table class="tpl-fields">
+      <thead><tr>
+        <th>${esc(txt('ui.templates.col_offset'))}</th>
+        <th>${esc(txt('ui.templates.col_size'))}</th>
+        <th>${esc(txt('ui.templates.col_name'))}</th>
+        <th>${esc(txt('ui.templates.col_kind'))}</th>
+        <th>${esc(txt('ui.templates.col_note'))}</th><th></th></tr></thead>
+      <tbody>${d.fields.map((f, i) => `
+        <tr data-i="${i}">
+          <td><input type="text" data-k="offset" value="${esc(f.offset)}"
+               placeholder="${esc(txt('ui.templates.offset_hint'))}"
+               inputmode="text"></td>
+          <td><input type="text" data-k="size" value="${esc(f.size)}"
+               ${f.kind in TPL_FIXED ? 'readonly' : ''}></td>
+          <td><input type="text" data-k="name" value="${esc(f.name)}"
+               maxlength="${max.name || 80}"></td>
+          <td><select data-k="kind">${tplKindOptions(f.kind)}</select></td>
+          <td><input type="text" data-k="note" value="${esc(f.note)}"
+               maxlength="${max.note || 200}"></td>
+          <td><button class="ghost" data-remove
+               title="${esc(txt('ui.templates.remove_field'))}"
+               aria-label="${esc(txt('ui.templates.remove_field'))}">✕</button></td>
+        </tr>`).join('')}</tbody></table>
+    <div class="row">
+      <button class="ghost" id="tpl-add-field">${esc(txt('ui.templates.add_field'))}</button>
+      <span class="hint">${d.fields.length}/${max.fields || 512}</span>
+    </div>
+    <div class="row tpl-actions">
+      <button class="solid" id="tpl-save">${esc(txt('ui.templates.save'))}</button>
+      ${saved ? `<button class="ghost" id="tpl-copy">${
+        esc(txt('ui.templates.save_copy'))}</button>
+        <button class="ghost" id="tpl-delete">${
+        esc(txt('ui.templates.delete'))}</button>` : ''}
+      <button class="ghost" id="tpl-revert"${TPL.dirty ? '' : ' disabled'}>${
+        esc(txt('ui.templates.revert'))}</button>
+      <span class="hint" id="tpl-dirty">${
+        TPL.dirty ? esc(txt('ui.templates.unsaved')) : ''}</span>
+    </div>
+    <div class="tpl-try">
+      <h4>${esc(txt('ui.templates.preview_heading'))}</h4>
+      <div class="row">
+        <label class="row"><span>${esc(txt('ui.templates.preview_from'))}</span>
+          <select id="tpl-base">${tplBaseOptions()}</select></label>
+        <label class="row"><span>${esc(txt('ui.templates.preview_at'))}</span>
+          <input type="text" id="tpl-at" value="${esc(TPL.previewAt)}"
+                 placeholder="${esc(txt('ui.templates.preview_offset_hint'))}"></label>
+        <button class="solid" id="tpl-preview">${esc(txt('ui.templates.preview'))}</button>
+      </div>
+    </div>`;
+  wireTemplateEditor();
+  renderTemplatePreview();
+}
+
+// Where an offset is counted from: the start of the image, or the start of
+// one of its partitions.
+function tplBaseOptions() {
+  const parts = (S.volumes?.partitions || []);
+  return [`<option value="0"${TPL.previewBase === 0 ? ' selected' : ''}>${
+    esc(txt('ui.templates.from_image'))}</option>`].concat(parts.map((p, i) =>
+    `<option value="${p.offset}"${TPL.previewBase === p.offset ? ' selected' : ''}>${
+      esc(txt('ui.templates.from_partition', {
+        name: p.slot || `#${i + 1}`, offset: '0x' + fmt.hex(p.offset, 8) }))
+    }</option>`)).join('');
+}
+
+function tplMarkDirty() {
+  TPL.dirty = true;
+  const el = $('#tpl-dirty');
+  if (el) el.textContent = txt('ui.templates.unsaved');
+  const rv = $('#tpl-revert');
+  if (rv) rv.disabled = false;
+}
+
+function wireTemplateEditor() {
+  $('#tpl-name').addEventListener('input', e => {
+    TPL.draft.name = e.target.value; tplMarkDirty();
+  });
+  $('#tpl-desc').addEventListener('input', e => {
+    TPL.draft.description = e.target.value; tplMarkDirty();
+  });
+  $$('#tpl-editor .tpl-fields tbody tr').forEach(tr => {
+    const f = TPL.draft.fields[+tr.dataset.i];
+    tr.querySelectorAll('[data-k]').forEach(inp => {
+      const k = inp.dataset.k;
+      inp.addEventListener(k === 'kind' ? 'change' : 'input', () => {
+        f[k] = inp.value;
+        tplMarkDirty();
+        if (k === 'kind') {
+          // A kind with a fixed width sets the size, so it cannot disagree.
+          if (f.kind in TPL_FIXED) f.size = String(TPL_FIXED[f.kind]);
+          renderTemplates();
+        }
+      });
+    });
+    tr.querySelector('[data-remove]').addEventListener('click', () => {
+      TPL.draft.fields.splice(+tr.dataset.i, 1);
+      if (!TPL.draft.fields.length) TPL.draft.fields.push(tplBlankField());
+      tplMarkDirty();
+      renderTemplates();
+    });
+  });
+  $('#tpl-add-field').addEventListener('click', () => {
+    TPL.draft.fields.push(tplBlankField());
+    tplMarkDirty();
+    renderTemplates();
+    const rows = $$('#tpl-editor .tpl-fields tbody tr');
+    rows[rows.length - 1]?.querySelector('[data-k="offset"]')?.focus();
+  });
+  $('#tpl-save').addEventListener('click', () => saveTemplate(false));
+  $('#tpl-copy')?.addEventListener('click', () => saveTemplate(true));
+  $('#tpl-delete')?.addEventListener('click', deleteTemplate);
+  $('#tpl-revert').addEventListener('click', () => {
+    if (!window.confirm(txt('ui.templates.confirm_discard'))) return;
+    // The current saved version, which after a conflict is the other
+    // examiner's, so the revision moves with it.
+    const t = tplSelected();
+    TPL.draft = t ? tplDraftFrom(t)
+      : { name: '', description: '', fields: [tplBlankField()] };
+    TPL.revision = t ? t.revision : null;
+    TPL.dirty = false;
+    $('#tpl-results').innerHTML = '';
+    renderTemplates();
+  });
+  $('#tpl-base').addEventListener('change', e => { TPL.previewBase = +e.target.value; });
+  $('#tpl-at').addEventListener('input', e => { TPL.previewAt = e.target.value; });
+  $('#tpl-at').addEventListener('keydown', e => {
+    if (e.key === 'Enter') previewTemplate();
+  });
+  $('#tpl-preview').addEventListener('click', previewTemplate);
+}
+
+async function saveTemplate(asCopy) {
+  const editing = !asCopy && TPL.sel !== 'new' && tplSelected();
+  const body = { case: TPL.case, template: tplBody() };
+  if (asCopy) {
+    // A copy is a new template: it keeps the fields, and needs its own name.
+    body.template.name = (TPL.draft.name || '').trim()
+      + txt('ui.templates.copy_suffix');
+  } else if (editing) {
+    body.id = TPL.sel;
+    body.revision = TPL.revision;
+  }
+  const r = await api.post('case/template', body).catch(() => null);
+  if (!r) return toast(txt('messages.templates_conflict'));
+  if (r.templates) TPL.list = r.templates;
+  if (r.error) {
+    // The form stays as it was, so nothing typed is lost.
+    if (r.templates) toast(txt('messages.templates_conflict'));
+    TPL.error = '';
+    renderTemplates();
+    $('#tpl-results').innerHTML = `<p class="empty is-warn">${esc(r.error)}</p>`;
+    return;
+  }
+  TPL.sel = r.id;
+  TPL.draft = tplDraftFrom(r.template);
+  TPL.revision = r.template.revision;
+  TPL.dirty = false;
+  renderTemplates();
+  toast(txt('messages.templates_saved'), 'action');
+  if (TPL.previewAt.trim()) previewTemplate();
+}
+
+async function deleteTemplate() {
+  const t = tplSelected();
+  if (!t || !window.confirm(txt('ui.templates.confirm_delete', { name: t.name }))) return;
+  const r = await api.post('case/template/delete',
+                           { case: TPL.case, id: t.id,
+                             revision: TPL.revision }).catch(() => null);
+  if (r?.templates) TPL.list = r.templates;
+  if (!r || r.error) {
+    toast(r?.error || txt('messages.templates_conflict'));
+    return renderTemplates();
+  }
+  Object.assign(TPL, { sel: null, draft: null, revision: null,
+                       dirty: false, preview: null });
+  renderTemplates();
+  toast(txt('messages.templates_deleted'), 'action');
+}
+
+async function previewTemplate() {
+  if (!S.open) return toast(txt('messages.templates_need_evidence'));
+  const at = tplNumber(TPL.previewAt);
+  const r = await api.post('structure/preview', {
+    template: tplBody(), offset: at === null ? -1 : at,
+    part: TPL.previewBase || undefined,
+  }).catch(() => null);
+  TPL.preview = r && !r.error ? r : { error: r?.error || '' };
+  renderTemplatePreview();
+}
+
+function renderTemplatePreview() {
+  const out = $('#tpl-results');
+  if (!out) return;
+  const p = TPL.preview;
+  if (!p) {
+    out.innerHTML = `<p class="empty">${esc(txt('ui.templates.preview_empty'))}</p>`;
+    return;
+  }
+  if (p.error !== undefined) {
+    out.innerHTML = `<p class="empty is-warn">${esc(p.error)}</p>`;
+    return;
+  }
+  const total = p.fields.length + p.skipped;
+  out.innerHTML = `
+    <div class="results-head">${esc(txt('ui.templates.preview_title', {
+      name: TPL.draft?.name || '', offset: fmt.hex(p.offset, 8) }))}</div>
+    ${p.skipped ? `<p class="hint is-warn">${esc(txt('ui.templates.preview_short',
+      { skipped: p.skipped, total }))}</p>` : ''}
+    <table class="tpl-out">
+      <thead><tr><th>${esc(txt('ui.templates.col_name'))}</th>
+        <th>${esc(txt('ui.templates.col_value'))}</th>
+        <th>${esc(txt('ui.templates.col_raw'))}</th>
+        <th>${esc(txt('ui.templates.col_at'))}</th>
+        <th>${esc(txt('ui.templates.col_note'))}</th></tr></thead>
+      <tbody>${p.fields.map((f, i) => `
+        <tr data-i="${i}" title="${esc(f.note || '')}">
+          <td>${esc(f.name)}</td>
+          <td class="mono">${esc(String(f.value))}</td>
+          <td class="mono dim">${esc(f.raw)}</td>
+          <td class="mono dim">0x${fmt.hex(f.offset, 8)} · ${f.size}B</td>
+          <td class="dim">${esc(f.note || '')}</td></tr>`).join('')}</tbody></table>`;
+}
+
+$('#btn-tpl-new')?.addEventListener('click', () => tplChoose('new'));
+
 function markFrame() {
   if (!S.scope.file || !S.scope.entry) return { frame: 'media' };
   const e = S.scope.entry;
@@ -8759,6 +9139,7 @@ function applyEmptyCase(r) {
   setEmptyScope(caseFile || r.case?.name || txt('ui.cases.no_case'), null);
   S.noteEdit = null;
   loadNotes();
+  loadTemplates();
 }
 
 function examinerName() {
@@ -9082,6 +9463,7 @@ function toast(msg, channel = 'problem') {
 const OPEN_STAGES = [
   ['bookmarks…', () => loadMarks()],
   [txt('ui.app.notes'), () => loadNotes()],
+  [txt('ui.app.templates'), () => loadTemplates()],
   [txt('ui.tagged_items_2'), () => loadTags()],
   [txt('ui.saved_searches_2'), () => loadSavedSearches()],
   [txt('ui.hash_sets'), () => loadHashSets()],
@@ -9569,6 +9951,7 @@ function applyNoCase() {
   S.tags = [];
   S.notes = [];
   loadNotes();
+  loadTemplates();
   $('#evidence-bar').innerHTML = `
     <button class="ghost" id="btn-open">${txt('ui.app.open')}</button>
     <button class="ghost" id="btn-case">${txt('ui.app.case')}</button>`;
@@ -10504,6 +10887,7 @@ function setModule(view) {
   if (view === 'time') loadStoredTimeline();
   if (view === 'diff') renderDiffPanel();
   if (view === 'notes') loadNotes();
+  if (view === 'templates') loadTemplates();
   hex.resize();
 }
 

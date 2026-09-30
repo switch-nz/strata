@@ -13,8 +13,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from engine import casedb, casepref, filesearch                   # noqa: E402
+import test_notes_api                                              # noqa: E402
 from test_notes_api import Client                                 # noqa: E402
 import imagebuild_fat                                              # noqa: E402
+
+
+def setUpModule():
+    # The server records the address it was started on, so a server another
+    # test module started earlier stops answering once a later one starts.
+    # This module gets its own, started when its first client asks.
+    test_notes_api._PORT.clear()
 
 
 class CleanColumns(unittest.TestCase):

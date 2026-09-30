@@ -59,7 +59,7 @@
   "marks_yet_select_bytes_hex_view_press": "No marks yet. Select bytes in the hex view and press Mark to record where you found something.",
   "matches_terms_indexed_documents_indexed_documents": "No matches for {terms} in {indexed_documents} indexed documents.",
   "notes.intro": "Notes are kept in the case under the name of whoever writes them. Editing a note keeps the earlier version; withdrawing one keeps it on the record, marked as withdrawn.",
-  "events.descriptions": "Strata's own summary of well-known event IDs, keyed by provider \u2014 not the source machine's message text. Blank means the ID is not in the table.",
+  "events.descriptions": "Strata's own summary of well-known event IDs, keyed by provider — not the source machine's message text. Blank means the ID is not in the table.",
   "events.sweep": "Every .evtx file on the volume is decoded and its records merged into one timeline across logs, so a logon in Security sits beside the service it installed in System.",
   "matches_windows_stores_most_text_utf_16le": "No matches. Windows stores most text as UTF-16LE — make sure that encoding is ticked.",
   "md5_sha_1_sha_256_single_pass": "MD5, SHA-1, SHA-256 and a fuzzy hash in a single pass per file. MD5 and SHA-1 because published hash sets are keyed on them; SHA-256 because that is what anyone verifying an export will expect; the fuzzy hash to surface files that are alike rather than identical.",
@@ -124,5 +124,6 @@
     }
   },
   "who.attribution": "This is what the audit log records against everything you do. It is <strong>stated, and not verified</strong> — the server does not authenticate anyone, and this name is an attribution, not proof of who performed an action. Changing it mid-session is recorded as its own entry; earlier work keeps the name it was done under.",
-  "why_bytes_intact_shown_below_export_writes": "{why} The bytes are intact and shown below; Export writes the file out for an external tool."
+  "why_bytes_intact_shown_below_export_writes": "{why} The bytes are intact and shown below; Export writes the file out for an external tool.",
+  "templates.intro": "A template names the fields of a structure by offset, size and kind, so you can read it out of the evidence without writing code. Templates are kept in the case, under the name of whoever saved them, and everyone who opens the case sees them. Integers are little-endian."
 }

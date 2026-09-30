@@ -1197,6 +1197,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"case": s.case.path, "notes": s.case.notes(
                 include_retracted=self._q("retracted", "") in ("1", "true"))})
 
+        if path == "/api/case/templates":
+            # Templates belong to the case, like its notes: shared by everyone
+            # who opens it, and available with no evidence loaded.
+            if not s.case:
+                return self._send(400, {"error": _t("server.export.case_open")})
+            return self._send(200, {
+                "case": s.case.path, "templates": s.case.templates(),
+                "kinds": list(structure_mod.TEMPLATE_KINDS),
+                "limits": {"fields": structure_mod.MAX_TEMPLATE_FIELDS,
+                           "field_size": structure_mod.MAX_FIELD_SIZE,
+                           "extent": structure_mod.MAX_TEMPLATE_EXTENT,
+                           "name": structure_mod.MAX_NAME,
+                           "note": structure_mod.MAX_NOTE,
+                           "description": structure_mod.MAX_DESCRIPTION}})
+
         if path == "/api/case/prefs":
             # Shared by everyone who opens the case, so it is the case's, not
             # the examiner's; a case with no evidence loaded still has them.
@@ -2563,13 +2578,51 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(409, {"error": _t("server.note.not_current")})
             return self._send(200, {"id": nid, "notes": s.case.notes()})
 
+        if path in ("/api/case/template", "/api/case/template/delete"):
+            if not s.case:
+                return self._send(400, {"error": _t("server.export.case_open")})
+            # An id and revision only mean something in the case they were
+            # read from.
+            shown = body.get("case")
+            if not shown or os.path.abspath(shown) != \
+                    os.path.abspath(s.case.path):
+                return self._send(409, {"error": _t("server.case.other_case"),
+                                        "case": s.case.path,
+                                        "templates": s.case.templates()})
+            tid, rev = body.get("id"), body.get("revision")
+            if (tid is not None and (isinstance(tid, bool)
+                                     or not isinstance(tid, int))) or \
+                    (rev is not None and (isinstance(rev, bool)
+                                          or not isinstance(rev, int))):
+                return self._send(400, {"error": _t("server.template.ids")})
+            if path.endswith("/delete"):
+                if tid is None or rev is None:
+                    return self._send(400, {"error": _t("server.template.ids")})
+                if not s.case.delete_template(tid, rev):
+                    return self._send(409, {
+                        "error": _t("server.template.changed"),
+                        "templates": s.case.templates()})
+                return self._send(200, {"templates": s.case.templates()})
+            if (tid is None) != (rev is None):
+                return self._send(400, {"error": _t("server.template.ids")})
+            try:
+                saved = s.case.save_template(body.get("template"), tid, rev)
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            if saved is None:
+                return self._send(409, {"error": _t("server.template.changed"),
+                                        "templates": s.case.templates()})
+            return self._send(200, {"id": saved["id"],
+                                    "template": saved,
+                                    "templates": s.case.templates()})
+
         if path == "/api/case/prefs":
             if not s.case:
                 return self._send(400, {"error": _t("server.export.case_open")})
             shown = body.get("case")
             if not shown or os.path.abspath(shown) != \
                     os.path.abspath(s.case.path):
-                return self._send(409, {"error": _t("server.note.other_case"),
+                return self._send(409, {"error": _t("server.case.other_case"),
                                         "case": s.case.path})
             if "folder_columns" not in body:
                 return self._send(400, {"error": _t("casepref.nothing_to_set")})
@@ -2582,6 +2635,31 @@ class Handler(BaseHTTPRequestHandler):
 
         if not s.image:
             return self._send(409, {"error": _t("server.case_peek.evidence_open")})
+
+        if path == "/api/structure/preview":
+            # A template applied to the bytes at one offset, without saving
+            # it: what the editor shows as an examiner builds a structure.
+            try:
+                tpl = structure_mod.validate_template(body.get("template"))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            off, base = body.get("offset"), body.get("part") or 0
+            if isinstance(off, bool) or not isinstance(off, int) \
+                    or isinstance(base, bool) or not isinstance(base, int) \
+                    or off < 0 or base < 0:
+                return self._send(400, {"error": _t("server.template.offset")})
+            at = base + off
+            size = s.image.size
+            if at >= size:
+                return self._send(400, {
+                    "error": _t("server.template.offset_past_end") % (
+                        at, size)})
+            extent = max(f["offset"] + f["size"] for f in tpl["fields"])
+            data = s.image.read_at(at, extent)
+            got = structure_mod.preview(tpl, data, at)
+            got.update(offset=at, image_size=size,
+                       read=len(data), short=len(data) < extent)
+            return self._send(200, got)
 
         if path == "/api/verify":
             def run(progress):

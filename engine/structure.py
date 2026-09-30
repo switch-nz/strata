@@ -1,6 +1,7 @@
 import struct
 import uuid
 
+from .text import t as _t
 from .volume import MBR_TYPES, GPT_GUIDS
 
 SECTOR = 512
@@ -53,6 +54,110 @@ def apply(template, data, base, struct_off=0):
             "note": note,
         })
     return out
+
+# -- Templates written by an examiner ---------------------------------------
+#
+# A template is data, not code: a name and rows of (offset, size, name, kind,
+# note) that apply() reads, exactly as the built-in ones above. Everything an
+# examiner types is checked here, once, so what is stored in a case and what
+# is applied to bytes is always a well-formed template of bounded size.
+
+TEMPLATE_KINDS = tuple(_INT_KINDS) + ("hex", "sig", "ascii", "utf16",
+                                      "guid", "bytes")
+MAX_TEMPLATE_FIELDS = 512
+MAX_FIELD_SIZE = 4096
+MAX_TEMPLATE_EXTENT = 1 << 16     # bytes a preview reads to apply one
+MAX_FIELD_OFFSET = 1 << 24
+MAX_NAME = 80
+MAX_NOTE = 200
+MAX_DESCRIPTION = 500
+
+
+def _bad(key, *args):
+    raise ValueError(_t(key) % args if args else _t(key))
+
+
+def _text(v, limit, key_missing=None, key_long=None):
+    if v is None:
+        v = ""
+    if not isinstance(v, str):
+        _bad("template.not_text")
+    v = v.strip()
+    if any(ord(c) < 32 or ord(c) == 127 for c in v):
+        _bad("template.control_chars")
+    if not v and key_missing:
+        _bad(key_missing)
+    if len(v) > limit:
+        _bad(key_long, limit)
+    return v
+
+
+def _whole(v, what):
+    if isinstance(v, bool) or not isinstance(v, int):
+        _bad("template.not_whole_number", what)
+    return v
+
+
+def validate_template(t):
+    """A template as the editor sends it, checked and normalised:
+    {"name", "description", "fields": [{"offset", "size", "name", "kind",
+    "note"}]}. Raises ValueError with a message an examiner can act on."""
+    if not isinstance(t, dict):
+        _bad("template.not_object")
+    name = _text(t.get("name"), MAX_NAME, "template.name_missing",
+                 "template.name_long")
+    desc = _text(t.get("description"), MAX_DESCRIPTION,
+                 key_long="template.description_long")
+    fields = t.get("fields")
+    if not isinstance(fields, list) or not fields:
+        _bad("template.no_fields")
+    if len(fields) > MAX_TEMPLATE_FIELDS:
+        _bad("template.too_many_fields", MAX_TEMPLATE_FIELDS)
+    out = []
+    for n, f in enumerate(fields, 1):
+        if not isinstance(f, dict):
+            _bad("template.not_object")
+        fname = _text(f.get("name"), MAX_NAME, None, "template.field_name_long")
+        if not fname:
+            _bad("template.field_name_missing", n)
+        kind = f.get("kind")
+        if kind not in TEMPLATE_KINDS:
+            _bad("template.kind_unknown", n, fname, kind)
+        off = _whole(f.get("offset"), "offset (field %d)" % n)
+        size = _whole(f.get("size"), "size (field %d)" % n)
+        if not 0 <= off <= MAX_FIELD_OFFSET:
+            _bad("template.offset_range", n, fname, MAX_FIELD_OFFSET)
+        if not 1 <= size <= MAX_FIELD_SIZE:
+            _bad("template.size_range", n, fname, MAX_FIELD_SIZE)
+        want = _INT_KINDS[kind][0] if kind in _INT_KINDS else (
+            16 if kind == "guid" else None)
+        if want is not None and size != want:
+            _bad("template.size_for_kind", n, fname, kind, want)
+        if kind == "hex" and size > 32:
+            _bad("template.size_range", n, fname, 32)
+        if off + size > MAX_TEMPLATE_EXTENT:
+            _bad("template.extent", n, fname, MAX_TEMPLATE_EXTENT)
+        note = _text(f.get("note"), MAX_NOTE, None, "template.note_long")
+        out.append({"offset": off, "size": size, "name": fname,
+                    "kind": kind, "note": note})
+    return {"name": name, "description": desc, "fields": out}
+
+
+def template_rows(t):
+    """The (offset, size, name, kind, note) rows apply() takes."""
+    return [(f["offset"], f["size"], f["name"], f["kind"], f["note"] or None)
+            for f in t["fields"]]
+
+
+def preview(t, data, base):
+    """A validated template applied to `data`, which was read at image
+    offset `base`. Fields that run past the end of the data are left out and
+    counted, so a short read is not shown as a template that fits."""
+    rows = template_rows(t)
+    fields = apply(rows, data, base)
+    return {"fields": fields, "skipped": len(rows) - len(fields),
+            "extent": max(o + n for o, n, *_ in rows)}
+
 
 MBR_ENTRY = [
     (0, 1, "Status", "hex", "0x80 = bootable, 0x00 = not"),

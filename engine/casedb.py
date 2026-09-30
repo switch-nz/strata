@@ -125,6 +125,21 @@ CREATE TABLE IF NOT EXISTS case_notes (
     retracted_at TEXT,
     retracted_by TEXT);
 
+-- Structure templates an examiner defined (engine.structure): the template
+-- itself as validated JSON, who last wrote it, and a revision that counts
+-- its saves so two examiners editing one template cannot overwrite each
+-- other unseen. Names are unique without regard to case.
+CREATE TABLE IF NOT EXISTS structure_templates (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    body TEXT NOT NULL,
+    examiner TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1);
+CREATE UNIQUE INDEX IF NOT EXISTS structure_templates_name
+    ON structure_templates (name COLLATE NOCASE);
+
 CREATE TABLE IF NOT EXISTS audit (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     at TEXT NOT NULL,
@@ -1313,6 +1328,90 @@ class Case:
             self.db.rollback()
             raise
         self.db.commit()
+
+    # -- structure templates ------------------------------------------------
+
+    def _template_row(self, r):
+        out = {"id": r["id"], "name": r["name"], "examiner": r["examiner"],
+               "created_at": r["created_at"], "updated_at": r["updated_at"],
+               "revision": r["revision"]}
+        try:
+            from . import structure
+            body = structure.validate_template(json.loads(r["body"]))
+            out["description"] = body["description"]
+            out["fields"] = body["fields"]
+        except (ValueError, TypeError) as exc:
+            # Kept and listed so it can be seen and deleted, but never applied.
+            out.update(description="", fields=[], damaged=str(exc))
+        return out
+
+    def templates(self):
+        return [self._template_row(r) for r in self.db.execute(
+            "SELECT * FROM structure_templates ORDER BY name COLLATE NOCASE")]
+
+    def template(self, tid):
+        r = self.db.execute("SELECT * FROM structure_templates WHERE id=?",
+                            (tid,)).fetchone()
+        return self._template_row(r) if r else None
+
+    @_writes
+    def save_template(self, template, tid=None, revision=None):
+        """A new template (tid None) or a new save of an existing one.
+        Returns the stored template, or None if `tid` is gone or has been
+        saved by someone else since `revision` was read -- checked under the
+        database's write lock, so that holds across processes too. Raises
+        ValueError for a template that does not validate or a name already
+        in use."""
+        from . import structure
+        body = structure.validate_template(template)
+        blob = json.dumps(body, sort_keys=True)
+        now = utcnow()
+        try:
+            with self._write_lock():
+                if tid is None:
+                    cur = self.db.execute(
+                        "INSERT INTO structure_templates (name, body, "
+                        "examiner, created_at, updated_at) VALUES (?,?,?,?,?)",
+                        (body["name"], blob, self.examiner, now, now))
+                    tid, action = cur.lastrowid, "template.add"
+                else:
+                    cur = self.db.execute(
+                        "UPDATE structure_templates SET name=?, body=?, "
+                        "examiner=?, updated_at=?, revision=revision+1 "
+                        "WHERE id=? AND revision=?",
+                        (body["name"], blob, self.examiner, now, tid,
+                         revision))
+                    if cur.rowcount != 1:
+                        return None
+                    action = "template.edit"
+        except sqlite3.IntegrityError:
+            raise ValueError(_t("template.name_in_use") % body["name"])
+        saved = self.template(tid)
+        self.log(action, {"id": tid, "name": body["name"],
+                          "revision": saved["revision"], "template": body})
+        return saved
+
+    @_writes
+    def delete_template(self, tid, revision):
+        """Deletes a template if it is still at `revision`; False otherwise.
+        What was deleted is kept whole in the audit log."""
+        with self._write_lock():
+            row = self.db.execute(
+                "SELECT * FROM structure_templates WHERE id=? AND revision=?",
+                (tid, revision)).fetchone()
+            if row is None:
+                return False
+            self.db.execute("DELETE FROM structure_templates WHERE id=?",
+                            (tid,))
+        try:
+            kept = json.loads(row["body"])
+        except ValueError:
+            # A damaged row is still recorded whole, as the text it held.
+            kept = row["body"]
+        self.log("template.delete", {"id": tid, "name": row["name"],
+                                     "revision": row["revision"],
+                                     "template": kept})
+        return True
 
     @_writes
     def add_note(self, body):

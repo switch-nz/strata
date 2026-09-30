@@ -45,6 +45,7 @@
   <button class="tab" data-view="attack" data-no-viewer role="tab" data-i18n="ui.hash.attack"></button>
   <button class="tab" data-view="diff" data-no-viewer role="tab" data-i18n="ui.app.diff"></button>
   <button class="tab" data-view="notes" data-no-viewer role="tab" data-i18n="ui.app.notes"></button>
+  <button class="tab" data-view="templates" data-no-viewer role="tab" data-i18n="ui.app.templates"></button>
 </nav>
 
 <main class="workspace" id="workspace">
@@ -343,6 +344,20 @@
       </div>
       <div class="view-main">
         <div id="note-results" class="results"></div>
+      </div>
+    </div>
+
+    <div class="view" data-view="templates">
+      <div class="controls tpl-controls">
+        <p class="hint" data-i18n="help.templates.intro"></p>
+        <div id="tpl-list" class="tpl-list"></div>
+        <div class="row">
+          <button class="solid" id="btn-tpl-new" data-i18n="ui.templates.new"></button>
+        </div>
+      </div>
+      <div class="view-main">
+        <div id="tpl-editor" class="tpl-editor"></div>
+        <div id="tpl-results" class="results"></div>
       </div>
     </div>
 
