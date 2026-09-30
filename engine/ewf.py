@@ -757,9 +757,35 @@ def identify_unsupported(head):
             return fmt, advice
     return None
 
+def _open_owning(path, fh, head):
+    """VDI and QCOW2: the reader takes over `fh` and closes it, also when
+    it refuses the file."""
+    if vdi_mod.looks_like_vdi(head):
+        try:
+            return vdi_mod.VdiImage(path, fh)
+        except vdi_mod.VdiError as exc:
+            raise UnsupportedContainer(_t("ewf.virtualbox_vdi") % exc.message,
+                                       exc.advice)
+    try:
+        return qcow2_mod.Qcow2Image(path, fh)
+    except qcow2_mod.QcowError as exc:
+        raise UnsupportedContainer(_t("ewf.qemu_qcow2") % exc.message,
+                                   exc.advice)
+
 def open_image(path):
-    with open(path, "rb") as fh:
+    fh = open(path, "rb")
+    try:
         head = fh.read(128)
+        fh.seek(0)
+        # VDI and QCOW2 take over this handle; every other reader opens
+        # the path itself, so the handle is closed for them.
+        if vdi_mod.looks_like_vdi(head) or qcow2_mod.looks_like_qcow(head):
+            img = _open_owning(path, fh, head)
+            fh = None
+            return img
+    finally:
+        if fh is not None:
+            fh.close()
     sig = head[:8]
     if sig in (EVF_SIG, LVF_SIG) or sig == EVF2_SIG:
         return EwfImage(path)
@@ -774,18 +800,6 @@ def open_image(path):
             return ad1_mod.Ad1Image(path)
         except ad1_mod.Ad1Error as exc:
             raise UnsupportedContainer(_t("ewf.accessdata_ad1") % exc.message,
-                                       exc.advice)
-    if vdi_mod.looks_like_vdi(head):
-        try:
-            return vdi_mod.VdiImage(path)
-        except vdi_mod.VdiError as exc:
-            raise UnsupportedContainer(_t("ewf.virtualbox_vdi") % exc.message,
-                                       exc.advice)
-    if qcow2_mod.looks_like_qcow(head):
-        try:
-            return qcow2_mod.Qcow2Image(path)
-        except qcow2_mod.QcowError as exc:
-            raise UnsupportedContainer(_t("ewf.qemu_qcow2") % exc.message,
                                        exc.advice)
     if sig == vhdx_mod.SIGNATURE:
         try:

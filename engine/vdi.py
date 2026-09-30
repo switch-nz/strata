@@ -98,21 +98,23 @@ class VdiImage:
     shown as though it were the whole disk. Only the disk is exposed: the
     banner, header and map are container metadata."""
 
-    def __init__(self, path):
+    def __init__(self, path, fh):
+        # The caller opens the file once, and this reader takes over the
+        # handle (closing it in close()); `path` is only its name.
         self.path = path
         self.segment_paths = [path]
         self.findings = []
         self._pos = 0
         self._io_lock = threading.Lock()
-        self._fh = open(path, "rb")
+        self._fh = fh
         try:
             self._open()
-        except Exception:
+        except BaseException:
             self.close()
             raise
 
     def _open(self):
-        file_size = os.path.getsize(self.path)
+        file_size = os.fstat(self._fh.fileno()).st_size
         self._file_size = file_size
         info = parse_header(self._file_read(0, 512))
         self.info_fields = info
