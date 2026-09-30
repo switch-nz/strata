@@ -11,6 +11,13 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+### Added
+
+- **BitLocker volumes encrypted with the Elephant diffuser.** Vista and
+  Windows 7 volumes using AES-CBC with the Elephant diffuser (encryption
+  methods 0x8000/0x8001) are now decrypted, not just identified. Previously
+  these volumes were refused outright.
+
 ## [0.7.0] - 2026-09-28
 
 Adds a cross-log event timeline with event ID descriptions, attributed case

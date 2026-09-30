@@ -165,5 +165,48 @@ class Unlock(unittest.TestCase):
         self.assertEqual(r["protector"], "Recovery password")
 
 
+class ElephantDiffuser(unittest.TestCase):
+    """AES-CBC 128 with the Elephant diffuser (method 0x8000, Vista/Win7),
+    round-tripped through a real encrypt (imagebuild_bitlocker) / decrypt
+    (engine.bitlocker) pair."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.image = build.build_diffuser_volume()
+
+    def vault(self):
+        return bitlocker.BitLocker(MemImage(self.image), size=len(self.image))
+
+    def test_encryption_method_is_reported(self):
+        info = self.vault().info()
+        self.assertEqual(info["encryption"], "AES-CBC 128 with Elephant diffuser")
+        self.assertEqual(info["mode"], "cbc-diffuser")
+
+    def test_password_unlocks_and_diffuser_round_trips_the_boot_sector(self):
+        r = self.vault().unlock(build.PASSWORD, kind="password")
+        self.assertTrue(r["unlocked"])
+        self.assertTrue(r["verified"], r["reason"])
+        self.assertEqual(r["verified_filesystem"], "NTFS")
+
+    def test_wrong_password_is_rejected(self):
+        r = self.vault().unlock("not the password", kind="password")
+        self.assertFalse(r["unlocked"])
+
+    def test_tweak_key_lives_in_its_own_256_bit_slot(self):
+        # Regression guard for the fixed-slot layout (fvek[:n] and
+        # fvek[0x20:0x20+n]), not XTS's tight fvek[:n]/fvek[n:2n] packing --
+        # confirmed against dislocker's dis_crypt_set_fvekey(). Corrupting
+        # the padding bytes between the two real keys (0x10:0x20) must not
+        # affect decryption.
+        v = self.vault()
+        v.unlock(build.PASSWORD, kind="password")
+        good = v.read(build.VH_OFF, 512)
+        v2 = bitlocker.BitLocker(MemImage(self.image), size=len(self.image))
+        v2.unlock(build.PASSWORD, kind="password")
+        v2.fvek = v2.fvek[:0x10] + b"\xff" * 0x10 + v2.fvek[0x20:]
+        v2._kc = None
+        self.assertEqual(v2.read(build.VH_OFF, 512), good)
+
+
 if __name__ == "__main__":
     unittest.main()
