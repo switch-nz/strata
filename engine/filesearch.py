@@ -1,6 +1,7 @@
 import re
 
 from . import profile
+from .text import t as _t
 
 DEFAULT_SCAN_BYTES = 64 << 20
 MAX_CONTEXT = 60
@@ -93,6 +94,67 @@ def walk_stream(fs, root_node, on_entry, path="/", max_depth=64,
     _walk(fs, root_node, path, sink, 0, max_depth, {root_node},
           budget=budget, state=state if state is not None else {})
     return sink.count
+
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?Z?)?$")
+_TIME_FILTERS = ("modified_after", "modified_before", "created_after",
+                 "created_before", "accessed_after", "accessed_before")
+_FLAG_FILTERS = ("deleted_only", "hide_deleted", "files_only")
+MAX_EXTENSIONS = 64
+MAX_NAME_FILTER = 255
+
+
+def clean_filters(f):
+    """Filters as a client sent them, checked and normalised for
+    matches_filters(); raises ValueError naming what is wrong. Unknown keys
+    are refused rather than ignored, so a misspelt filter cannot quietly
+    match everything."""
+    if f in (None, {}):
+        return None
+    if not isinstance(f, dict):
+        raise ValueError(_t("filters.not_object"))
+    out = {}
+    for key, v in f.items():
+        if v is None or v is False:
+            continue
+        if key == "name":
+            if not isinstance(v, str) or len(v) > MAX_NAME_FILTER:
+                raise ValueError(_t("filters.name_bad") % MAX_NAME_FILTER)
+            if v.strip():
+                out[key] = v.strip()
+        elif key == "extensions":
+            if not isinstance(v, list) or len(v) > MAX_EXTENSIONS \
+                    or not all(isinstance(x, str) for x in v):
+                raise ValueError(_t("filters.extensions_bad") % MAX_EXTENSIONS)
+            exts = [x.strip().lstrip(".").lower() for x in v]
+            exts = [x for x in exts if x]
+            if exts:
+                out[key] = exts
+        elif key in ("min_size", "max_size"):
+            if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+                raise ValueError(_t("filters.size_bad") % key)
+            out[key] = v
+        elif key in _TIME_FILTERS:
+            if not isinstance(v, str) or not _DATE.match(v):
+                raise ValueError(_t("filters.date_bad") % key)
+            out[key] = v
+        elif key in _FLAG_FILTERS:
+            if v is not True:
+                raise ValueError(_t("filters.flag_bad") % key)
+            out[key] = True
+        else:
+            raise ValueError(_t("filters.unknown") % key)
+    if out.get("deleted_only") and out.get("hide_deleted"):
+        raise ValueError(_t("filters.deleted_conflict"))
+    lo, hi = out.get("min_size"), out.get("max_size")
+    if lo is not None and hi is not None and lo > hi:
+        raise ValueError(_t("filters.size_range"))
+    for a, b in (("modified_after", "modified_before"),
+                 ("created_after", "created_before"),
+                 ("accessed_after", "accessed_before")):
+        if a in out and b in out and out[a] > out[b]:
+            raise ValueError(_t("filters.date_range") % a.split("_")[0])
+    return out or None
+
 
 def matches_filters(e, f):
     if not f:
