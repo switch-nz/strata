@@ -93,6 +93,12 @@ def _entries(data, pos, end, depth=0):
     return out
 
 def _stretch(initial, salt, progress=None):
+    # This is BitLocker's own documented key-stretching algorithm (FVE
+    # "chained hash"), not a scheme chosen here -- it must be reproduced
+    # exactly, SHA256 and all, to unwrap a real volume's VMK. A code
+    # scanner flagging bare SHA256 for password hashing doesn't apply: the
+    # 2**20 chained rounds below are the actual KDF, and there is no
+    # stronger substitute that would still open a real BitLocker volume.
     last = b"\x00" * 32
     step = STRETCH_ROUNDS // 100
     for i in range(STRETCH_ROUNDS):
@@ -441,6 +447,9 @@ class BitLocker:
                 return None
             initial = bek_key
         else:
+            # The double-SHA256 digest BitLocker itself derives from a typed
+            # password, before _stretch() does the actual, expensive KDF
+            # work. Reproduced exactly for the same reason as _stretch().
             initial = hashlib.sha256(
                 hashlib.sha256(secret.encode("utf-16-le")).digest()).digest()
 

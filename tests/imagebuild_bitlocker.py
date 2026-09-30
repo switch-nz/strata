@@ -107,6 +107,10 @@ def _stretched_protector(guid, ptype, initial, salt, nonce):
 
 
 def _password_initial(secret):
+    """The exact inverse of bitlocker.py's own password digest -- not a
+    hashing scheme chosen for this fixture, but BitLocker's documented
+    pre-stretch digest, which the fixture must reproduce to be unlocked by
+    the code under test."""
     return hashlib.sha256(
         hashlib.sha256(secret.encode("utf-16-le")).digest()).digest()
 
