@@ -46,7 +46,15 @@ recognised and refused by name today; these entries are about *reading* it.
       if the parent's identifier is not the one it was made from. Verified only against synthetic images built from the published
       specification; disks written by Virtual PC, Hyper-V and Disk2vhd still
       need checking.
-- [ ] **QCOW2**, **VDI**, **DMG**, **AFF / AFF4** — AFF4 is ZIP-based and is
+- [~] **QCOW2** (versions 2 and 3, including zlib-compressed clusters) and
+      **VDI** (dynamic and fixed) — read, and verified only against synthetic
+      images built from the published layouts; disks written by QEMU and
+      VirtualBox themselves still need checking. A disk that holds only a
+      change from another (a QCOW2 with a backing file, a differencing or
+      undo VDI) is refused rather than shown alone, as are encrypted
+      QCOW2, external data files, subcluster (extended L2) tables and
+      zstd-compressed clusters. Reading through a backing chain is not done.
+- [ ] **DMG**, **AFF / AFF4** — AFF4 is ZIP-based and is
       deliberately not matched by signature, since refusing every ordinary
       archive to catch one image format would be wrong far more often than
       right.

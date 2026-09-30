@@ -172,9 +172,35 @@ def run_ewf(data, _dir=[], name="case.E01"):
         step = max(1, min(img.size, 1 << 20) // 64)
         for off in range(0, min(img.size, 1 << 20), step):
             img.read_at(off, 4096)
-        img.verify()
+        # A mutated header can claim an enormous disk; hashing all of it
+        # would be a hang, not a finding.
+        if img.size <= (64 << 20):
+            img.verify()
     finally:
         img.close()
+
+
+def run_vdi(data):
+    run_ewf(data, name="disk.vdi")
+
+
+def run_qcow2(data):
+    run_ewf(data, name="disk.qcow2")
+
+
+def _vdi_seed():
+    import imagebuild_vdi
+    return imagebuild_vdi.build(
+        5 * 4096, {0: bytes(range(256)) * 16, 2: b"\xA5" * 4096},
+        zero=(3,))[0]
+
+
+def _qcow2_seed():
+    import imagebuild_qcow2
+    return imagebuild_qcow2.build(
+        5 * 4096, {0: bytes(range(256)) * 16, 2: ("z", b"\xA5" * 4096),
+                   3: "zero", 4: ("z", b"strata " * 500)},
+        version=3, pack=True)
 
 
 def run_vmdk(data):
@@ -332,6 +358,8 @@ def targets():
     out["vhd-dynamic"] = (lambda: imagebuild_vhd.sparse(
         5 * 4096, _vhd_blocks())[0], run_vhd)
     out["vhd-diff"] = (_vhd_diff_seed, run_vhd_diff)
+    out["vdi"] = (_vdi_seed, run_vdi)
+    out["qcow2"] = (_qcow2_seed, run_qcow2)
     out["vmdk-stream"] = (lambda: imagebuild_vmdk.build_stream_optimized()[0],
                           run_vmdk)
     # A VSS carrier is an NTFS-volume-like input: the store parser reads the
