@@ -996,6 +996,7 @@ function offsetBase() {
 function setTimeDisplay(mode) {
   timeDisplay = ['utc', 'local'].includes(mode) ? mode : 'both';
   savePref('time_display', timeDisplay);
+  renderNotes();
   if (dirView.entries.length) renderDirView();
   if (inspecting && inspecting.entry) {
     showEntry(inspecting.entry, inspecting.part, inspecting.from,
@@ -3396,15 +3397,22 @@ function tzLabel(mins) {
     String(Math.abs(mins) % 60).padStart(2, '0')}`;
 }
 
-async function loadTimezone(prompt = false) {
+// The zone already applied to the case, if any. Loading it never starts a
+// detection, so a page reload can restore it cheaply.
+async function loadAppliedTimezone() {
   let r;
-  try { r = await api.get('timezone'); } catch { return; }
+  try { r = await api.get('timezone'); } catch { return null; }
   if (r.applied) {
     S.tz = { ...r.applied, label: tzLabel(r.applied.offset_minutes) };
   }
   S.tzCandidates = r.candidates || [];
   renderTzStat();
-  if (r.applied) return;
+  return r;
+}
+
+async function loadTimezone(prompt = false) {
+  const r = await loadAppliedTimezone();
+  if (!r || r.applied) return;
 
   if (!r.detected) {
     const t = await api.post('timezone/detect', {});
@@ -3417,6 +3425,7 @@ async function loadTimezone(prompt = false) {
 }
 
 function renderTzStat() {
+  renderNotes();
   const el = $('#stat-tz');
   if (!el) return;
   if (!S.tz) {
@@ -6959,7 +6968,10 @@ function renderEvents(r, part) {
     r.note,
     r.truncated ? txt('ui.events.truncated', {
       total: fmt.count(r.total_events), kept: fmt.count(events.length) }) : null,
-    ...logs.filter(l => l.error).map(l => txt('ui.events.log_error',
+    logs.some(l => l.deleted) ? txt('ui.events.deleted_note', {
+      n: logs.filter(l => l.deleted).length }) : null,
+    ...logs.filter(l => l.error).map(l => txt(
+      l.deleted ? 'ui.events.log_error_deleted' : 'ui.events.log_error',
       { name: l.source || l.name, error: l.error })),
     ...logs.flatMap(l => (l.findings || []).map(f => `${l.name}: ${f}`)),
   ].filter(Boolean).map(n => `<div class="notice">${esc(n)}</div>`).join('');
@@ -6977,8 +6989,11 @@ function renderEvents(r, part) {
       <input type="text" id="ev-q" class="dv-filter"
              placeholder="${esc(txt('ui.events.filter'))}">
       <select id="ev-log"><option value="">${txt('ui.events.all_logs')}</option>${
-        withRecords.map(l => `<option value="${l.i}">${esc(l.name)} (${
+        withRecords.map(l => `<option value="${l.i}">${esc(l.name)}${
+          l.deleted ? ' ' + esc(txt('ui.events.deleted_tag')) : ''} (${
           fmt.count(l.records)})</option>`).join('')}</select>
+      <label class="row"><input type="checkbox" id="ev-hide-deleted">
+        <span>${txt('ui.events.hide_deleted')}</span></label>
       <label class="row"><input type="checkbox" id="ev-described">
         <span>${txt('ui.events.described_only')}</span></label>
     </div>
@@ -6987,10 +7002,12 @@ function renderEvents(r, part) {
     const q = ($('#ev-q').value || '').trim().toLowerCase();
     const log = $('#ev-log').value;
     const described = $('#ev-described').checked;
+    const hideDeleted = $('#ev-hide-deleted').checked;
     const hits = [];
     for (let i = events.length - 1; i >= 0; i--) {
       const e = events[i];
       if (log !== '' && e.log !== +log) continue;
+      if (hideDeleted && e.deleted) continue;
       if (described && !e.description) continue;
       if (q && ![e.event_id, e.provider, e.description, e.computer, e.channel]
           .some(v => v != null && String(v).toLowerCase().includes(q))) continue;
@@ -7005,7 +7022,10 @@ function renderEvents(r, part) {
         const l = logs[e.log] || {};
         return `<div class="result" data-i="${i}">
           <div class="top"><span class="kind">${esc(e.event_id ?? '—')}${
-            e.level ? ' · ' + esc(e.level) : ''}</span>
+            e.level ? ' · ' + esc(e.level) : ''}</span>${
+            e.deleted ? ` <span class="flag warn" title="${esc(
+              txt('ui.events.deleted_title'))}">${
+              txt('ui.events.deleted_flag')}</span>` : ''}
             <span class="off">${esc(fmt.time(e.time))}</span></div>
           <div class="name">${e.description ? esc(e.description)
             : `<span class="dim">${txt('ui.events.no_description')}</span>`}</div>
@@ -7022,6 +7042,7 @@ function renderEvents(r, part) {
   $('#ev-q').addEventListener('input', draw);
   $('#ev-log').addEventListener('change', draw);
   $('#ev-described').addEventListener('change', draw);
+  $('#ev-hide-deleted').addEventListener('change', draw);
   draw();
   tabCount('triage', events.length);
 }
@@ -8285,7 +8306,9 @@ async function loadMarks() {
 // Case notes: each version names who wrote it. An edit is a new version and
 // a withdrawal is a flag; nothing is changed in place, so the record keeps
 // what was said, by whom, and when.
-const noteTime = t => (t ? t.replace('T', ' ').replace('Z', ' UTC') : '—');
+// The same formatter as every other timestamp, so notes follow the case's
+// time zone and the UTC / local / both setting, as the report does.
+const noteTime = t => fmt.time(t);
 
 async function loadNotes() {
   const box = $('#note-results');
@@ -10307,6 +10330,7 @@ $$('.modules .tab').forEach(tab =>
   if (st.open) {
     applyOpened(st);
     if (p.split_hex) toggleSplit(true);
+    await loadAppliedTimezone();
     await loadMarks();
     await loadTags();
     await loadNotes();

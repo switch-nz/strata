@@ -433,26 +433,76 @@ def count_records(data):
         pos += CHUNK_SIZE
     return total
 
-def parse(data, max_records=None, progress=None, offset=0):
-    out = {"records": [], "findings": [], "chunks": 0}
-    if len(data) < HEADER_SIZE or data[:8] != FILE_MAGIC:
-        return None
-
-    (first_chunk, last_chunk, next_record) = struct.unpack_from("<QQQ", data, 8)
-    header_size, minor, major = struct.unpack_from("<IHH", data, 32)
-    chunk_count, = struct.unpack_from("<H", data, 42)
-    flags, = struct.unpack_from("<I", data, 120)
-    out["header"] = {
+def _header_info(head):
+    """The file header's fields and the findings it implies."""
+    (first_chunk, last_chunk, next_record) = struct.unpack_from("<QQQ", head, 8)
+    header_size, minor, major = struct.unpack_from("<IHH", head, 32)
+    chunk_count, = struct.unpack_from("<H", head, 42)
+    flags, = struct.unpack_from("<I", head, 120)
+    info = {
         "version": "%d.%d" % (major, minor),
         "chunk_count": chunk_count,
         "next_record_id": next_record,
         "dirty": bool(flags & 0x01),
         "full": bool(flags & 0x02),
     }
+    findings = []
     if flags & 0x01:
-        out["findings"].append(
+        findings.append(
             "The log was not closed cleanly (dirty flag set); the last chunk "
             "may hold records the header does not count.")
+    return info, findings
+
+def _record_spans(cdata, findings):
+    """(offset, size) of each whole record in one chunk, in order."""
+    free_offset, = struct.unpack_from("<I", cdata, 0x30)
+    limit = min(free_offset if free_offset > CHUNK_DATA_START else CHUNK_SIZE,
+                CHUNK_SIZE)
+    rp = CHUNK_DATA_START
+    while rp + 24 <= limit:
+        if cdata[rp:rp + 4] != RECORD_MAGIC:
+            break
+        size, = struct.unpack_from("<I", cdata, rp + 4)
+        if size < 24 or rp + size > CHUNK_SIZE:
+            findings.append(
+                "A record at chunk offset 0x%X declares an impossible size."
+                % rp)
+            break
+        yield rp, size
+        rp += size
+
+def _decode_record(chunk, cdata, rp, size, findings, keep_fields=True):
+    """One record as a dict. `keep_fields` keeps every flattened field, a
+    few KB a record; a summary of a whole log has no use for them."""
+    rec_id, = struct.unpack_from("<Q", cdata, rp + 8)
+    written, = struct.unpack_from("<Q", cdata, rp + 16)
+    payload = cdata[rp + 24: rp + size - 4]
+    try:
+        el, _ = _parse_fragment(chunk, payload, 0, [], data_offset=rp + 24)
+    except Exception as exc:
+        el = None
+        findings.append("Record %d: %s" % (rec_id, exc))
+    rec = {"record_id": rec_id, "written_at": filetime(written)}
+    if el is None:
+        rec["unsupported"] = "binary XML could not be decoded"
+    else:
+        flat = _flatten(el)
+        rec.update(_summarise(flat))
+        rec["description"] = eventids.describe(
+            rec.get("provider"), rec.get("event_id"), flat)
+        if keep_fields:
+            rec["fields"] = flat
+        if el.get("_unsupported"):
+            rec["unsupported"] = ", ".join(el["_unsupported"])
+    return rec
+
+def parse(data, max_records=None, progress=None, offset=0):
+    out = {"records": [], "findings": [], "chunks": 0}
+    if len(data) < HEADER_SIZE or data[:8] != FILE_MAGIC:
+        return None
+
+    out["header"], notes = _header_info(data)
+    out["findings"].extend(notes)
 
     pos = HEADER_SIZE
     seen_records = 0
@@ -466,46 +516,13 @@ def parse(data, max_records=None, progress=None, offset=0):
             break
         out["chunks"] += 1
         chunk = _Chunk(cdata, pos)
-        free_offset, = struct.unpack_from("<I", cdata, 0x30)
-        rp = CHUNK_DATA_START
-        limit = min(free_offset if free_offset > CHUNK_DATA_START else CHUNK_SIZE,
-                    CHUNK_SIZE)
-        while rp + 24 <= limit:
-            if cdata[rp:rp + 4] != RECORD_MAGIC:
-                break
-            size, = struct.unpack_from("<I", cdata, rp + 4)
-            if size < 24 or rp + size > CHUNK_SIZE:
-                out["findings"].append(
-                    "A record at chunk offset 0x%X declares an impossible size."
-                    % rp)
-                break
+        for rp, size in _record_spans(cdata, out["findings"]):
             if skipped < offset:
                 skipped += 1
-                rp += size
                 continue
-            rec_id, = struct.unpack_from("<Q", cdata, rp + 8)
-            written, = struct.unpack_from("<Q", cdata, rp + 16)
-            payload = cdata[rp + 24: rp + size - 4]
-            try:
-                el, _ = _parse_fragment(chunk, payload, 0, [],
-                                        data_offset=rp + 24)
-            except Exception as exc:
-                el = None
-                out["findings"].append("Record %d: %s" % (rec_id, exc))
-            rec = {"record_id": rec_id, "written_at": filetime(written)}
-            if el is None:
-                rec["unsupported"] = "binary XML could not be decoded"
-            else:
-                flat = _flatten(el)
-                rec.update(_summarise(flat))
-                rec["description"] = eventids.describe(
-                    rec.get("provider"), rec.get("event_id"), flat)
-                rec["fields"] = flat
-                if el.get("_unsupported"):
-                    rec["unsupported"] = ", ".join(el["_unsupported"])
-            out["records"].append(rec)
+            out["records"].append(
+                _decode_record(chunk, cdata, rp, size, out["findings"]))
             seen_records += 1
-            rp += size
             if max_records and seen_records >= max_records:
                 out["more"] = True
                 out["offset"] = offset
@@ -520,44 +537,114 @@ def parse(data, max_records=None, progress=None, offset=0):
         progress(1.0)
     return out
 
+class LogScan:
+    """An event log read one 64 KiB chunk at a time, so what is held is a
+    chunk and not the file. `read_at(offset, length)` reads the log and
+    `size` is its length. `valid` says whether it has an event-log header;
+    records() yields the log's records without their flattened fields, and
+    fills in `header`, `findings` and `chunks` as it goes."""
+
+    def __init__(self, read_at, size):
+        self.read_at = read_at
+        self.size = size
+        self.header = None
+        self.findings = []
+        self.chunks = 0
+        head = read_at(0, HEADER_SIZE) if size >= HEADER_SIZE else b""
+        self.valid = len(head) >= HEADER_SIZE and head[:8] == FILE_MAGIC
+        if self.valid:
+            self.header, notes = _header_info(head)
+            self.findings.extend(notes)
+        self.position = HEADER_SIZE
+
+    def records(self):
+        if not self.valid:
+            return
+        while self.position + CHUNK_SIZE <= self.size:
+            cdata = self.read_at(self.position, CHUNK_SIZE)
+            if len(cdata) < CHUNK_SIZE or cdata[:8] != CHUNK_MAGIC:
+                break
+            self.chunks += 1
+            chunk = _Chunk(cdata, self.position)
+            for rp, size in _record_spans(cdata, self.findings):
+                yield _decode_record(chunk, cdata, rp, size, self.findings,
+                                     keep_fields=False)
+            self.position += CHUNK_SIZE
+
+class _Bytes:
+    def __init__(self, data):
+        self.data = data
+        self.size = len(data)
+
+    def read_at(self, offset, length):
+        return self.data[offset:offset + length]
 
 SWEEP_MAX_EVENTS = 100000
 LOG_READ_MAX = 256 << 20
 
 def sweep(logs, progress=None, max_events=SWEEP_MAX_EVENTS):
     """Every record in several event logs from one volume, merged into one
-    timeline. `logs` is [(name, source path, read())]; read() returns the
-    file's bytes. Returns per-log summaries and the events, oldest first;
-    past max_events only the newest are kept, and the result says so."""
-    summaries, events = [], []
+    timeline. `logs` is [(name, source path, reader, size, deleted)], the
+    last two optional. `reader` is an object with `size` and
+    `read_at(offset, length)`, read a chunk at a time, or a callable that
+    returns the log's bytes. A log that is a deleted file is marked so, and
+    so is every event read from it: its clusters may have been reused since.
+
+    Memory does not grow with the logs: each is read a chunk at a time, and
+    only the `max_events` newest events overall are kept, so past that the
+    oldest are dropped as the sweep goes. `progress` is called between
+    chunks, so a cancellation it raises takes effect within one chunk.
+    Returns per-log summaries and the events, oldest first."""
+    import heapq
+    summaries, kept = [], []
+    found = 0
+    seq = 0
     total = max(1, len(logs))
     for i, item in enumerate(logs):
-        name, source, read = item[:3]
+        name, source, reader = item[:3]
         size = item[3] if len(item) > 3 else None
+        deleted = bool(item[4]) if len(item) > 4 else False
         if progress:
             progress(i / total)
-        row = {"name": name, "source": source, "records": 0}
+        row = {"name": name, "source": source, "records": 0,
+               "deleted": deleted}
         summaries.append(row)
         try:
-            r = parse(read())
+            if not hasattr(reader, "read_at"):
+                reader = _Bytes(reader())
+            scan = LogScan(reader.read_at, min(reader.size, LOG_READ_MAX))
         except Exception as exc:
             row["error"] = str(exc) or type(exc).__name__
             continue
-        if r is None:
+        if not scan.valid:
             row["error"] = "not an event log (no ElfFile header)"
             continue
-        recs = r["records"]
-        row["records"] = len(recs)
-        row["findings"] = list(r.get("findings") or [])
+        row["findings"] = scan.findings
+        row["dirty"] = bool(scan.header.get("dirty"))
         if size and size > LOG_READ_MAX:
             row["partial"] = True
-            row["findings"].append(
+            scan.findings.append(
                 "This log is %d bytes; only the first %d were read, so "
                 "records after that point are not in the timeline."
                 % (size, LOG_READ_MAX))
-        row["dirty"] = bool((r.get("header") or {}).get("dirty"))
-        times = []
-        for x in recs:
+        records = scan.records()
+        chunks_seen = 0
+        while True:
+            # Reading and decoding may fail on a damaged log; a cancellation
+            # raised by `progress` below is not caught here.
+            try:
+                x = next(records)
+            except StopIteration:
+                break
+            except Exception as exc:
+                row["error"] = str(exc) or type(exc).__name__
+                break
+            if progress and scan.chunks != chunks_seen:
+                chunks_seen = scan.chunks
+                span = max(1, scan.size - HEADER_SIZE)
+                progress((i + min(1.0, (scan.position - HEADER_SIZE) / span))
+                         / total)
+            row["records"] += 1
             # A time is text. One that a substitution decoded to something
             # else falls back to the record's own write time, so a single
             # odd record cannot stop the logs being merged and sorted.
@@ -565,10 +652,13 @@ def sweep(logs, progress=None, max_events=SWEEP_MAX_EVENTS):
             if not isinstance(when, str) or not when:
                 when = x.get("written_at")
             if when:
-                times.append(when)
+                if "first" not in row or when < row["first"]:
+                    row["first"] = when
+                if "last" not in row or when > row["last"]:
+                    row["last"] = when
             if not row.get("channel") and x.get("channel"):
                 row["channel"] = x["channel"]
-            events.append({
+            event = {
                 "time": when, "log": len(summaries) - 1,
                 "record_id": x.get("record_id"),
                 "event_id": x.get("event_id"), "provider": x.get("provider"),
@@ -576,16 +666,19 @@ def sweep(logs, progress=None, max_events=SWEEP_MAX_EVENTS):
                 "computer": x.get("computer"),
                 "description": x.get("description"),
                 "undecoded": bool(x.get("unsupported")),
-            })
-        if times:
-            row["first"], row["last"] = min(times), max(times)
+                "deleted": deleted,
+            }
+            found += 1
+            seq += 1
+            key = (event["time"] or "", event["log"],
+                   event["record_id"] or 0, seq)
+            if len(kept) < max_events:
+                heapq.heappush(kept, (key, event))
+            else:
+                heapq.heappushpop(kept, (key, event))
     if progress:
         progress(1.0)
-    events.sort(key=lambda e: (e["time"] or "", e["log"],
-                               e["record_id"] or 0))
-    found = len(events)
-    if found > max_events:
-        events = events[-max_events:]
+    events = [event for _, event in sorted(kept, key=lambda k: k[0])]
     return {"logs": summaries, "events": events, "total_events": found,
             "truncated": found > max_events,
             "note": eventids.NOTE}

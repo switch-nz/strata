@@ -13,6 +13,37 @@ records, not how the code changed.
 
 ### Fixed
 
+- **Sweeping event logs across a volume could use large amounts of memory
+  and could not be cancelled promptly.** Every log was read whole and every
+  event kept before the newest were picked. Logs are now read a chunk at a
+  time, only the newest events are kept, cancelling takes effect within a
+  chunk, and a log that stops being readable partway keeps what was read and
+  says so.
+- **Events from deleted event logs were merged among the live ones with
+  nothing to tell them apart.** The volume-wide Events timeline also read
+  `.evtx` files that had been deleted, whose clusters may have been reused
+  since, so an event could come from data that is not what the log once
+  held. Those logs and each of their events are now marked "deleted", a note
+  says why they need care, the log filter labels them, and a checkbox hides
+  them. An unreadable deleted file says it is deleted, and a live log is
+  listed before a deleted one at the same path.
+- **A differencing VHD could show a stale file listing after its parent was
+  replaced.** The saved listing of an NTFS volume was checked against the
+  child disk's size and time only, but a differencing disk shows mostly what
+  its parent holds. Replacing the parent with another disk of the same
+  identifier left the old listing in place. Each parent's size and time are
+  now part of the check, so a changed or missing parent rebuilds the listing;
+  disks without a parent are checked exactly as before.
+- **After reloading the page, every date fell back to UTC.** The time zone
+  applied to a case was only loaded when a case or image was opened, not when
+  the page was refreshed with one already open, so dates showed UTC (and
+  notes disagreed with the report) until the zone was applied again. The
+  applied zone is now restored on reload.
+- **Case note times ignored the case's time zone and the time-display
+  setting.** Notes always showed UTC, while every other date in the interface
+  and the HTML report showed the applied zone, so one note could carry two
+  different times. Notes now use the same display as everything else, and
+  switch when the zone or the setting changes.
 - **Text from an image was shown unescaped in the exhibit details, so a
   crafted name could run script in Strata.** The exhibit's name, format,
   acquisition fields (case and evidence numbers, examiner, tool), stored
