@@ -108,9 +108,17 @@ recognised and refused by name today; these entries are about *reading* it.
 
 ## Artefacts
 
-- [ ] **`$LogFile`** — the log NTFS keeps for crash recovery. A different
-      structure from `$UsnJrnl` and a much shorter window, but it records the
-      operations rather than a summary per file.
+- [~] **`$LogFile`** — the log NTFS keeps for crash recovery. Restart areas
+      and log records are read and shown as recorded: LSN, transaction,
+      redo/undo operation (name and code), target attribute, and a file name
+      with its timestamps where the payload of an add/delete-index-entry or
+      update-file-name record is a plain `$FILE_NAME` that passes sanity
+      checks. Built from third-party format descriptions and tested on
+      synthetic logs only — no real `$LogFile` has been checked. Not done:
+      deriving the target MFT record number, names from
+      InitializeFileRecordSegment (whole MFT records) or other operations,
+      and any reconstruction of what happened in order (deliberately left
+      out: the log is a ring and an inferred story could mislead).
 - [x] **Browser disk cache** — Chromium blockfile (what Chrome and Edge on
       Windows write for web content), Chromium Simple Cache and Firefox cache2
       entries are read (URL, status, content type, times), separate from the

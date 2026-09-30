@@ -94,8 +94,8 @@ alongside the classification, and the measurement window is always stated.
 
 ## Analysis
 
-**Artefacts** — sixteen parsers: volume layout, encrypted volumes, the change
-journal (`$UsnJrnl`), prefetch, shortcuts and Jump Lists, Recycle Bin,
+**Artefacts** — seventeen parsers: volume layout, encrypted volumes, the change
+journal (`$UsnJrnl`), the NTFS log (`$LogFile`, shown as recorded), prefetch, shortcuts and Jump Lists, Recycle Bin,
 well-known registry keys, shellbags, Amcache and ShimCache, browser history,
 Windows event logs, file-type verification, timeline, hashing every file,
 signature carving, and the content index. Each says what it will cost before
@@ -161,7 +161,7 @@ separate from the tool's suggestions, and never promotes one to the other.
 
 ## Not implemented
 
-EWF v2 (Ex01), FileVault, OST-specific structures, `$LogFile`, and carving
+EWF v2 (Ex01), FileVault, OST-specific structures, reconstructing events from `$LogFile`, and carving
 across fragments.
 
 ---

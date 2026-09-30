@@ -40,6 +40,7 @@ from . import sqlitehints as sqlitehints_mod
 from . import prefs as prefs_mod
 from . import recents as recents_mod
 from .text import t as _t
+from . import logfile as logfile_mod
 from . import usnjrnl as usnjrnl_mod
 from . import entropy as entropy_mod
 from . import exif as exif_mod
@@ -263,6 +264,7 @@ class Evidence:
         self.tz_candidates = []
         self.tz_scanned = False
         self.usn = None
+        self.logfile = None
         self.file_bytes = {}
 
     def brief(self):
@@ -284,7 +286,8 @@ class Session:
         "image", "path", "volumes", "fs_cache", "snapshot_cache",
         "index_tasks", "hive_cache",
         "unlocked", "vault_cache", "reader_cache", "tz_candidates",
-        "tz_scanned", "evidence_id", "_structures", "usn", "file_bytes",
+        "tz_scanned", "evidence_id", "_structures", "usn", "logfile",
+        "file_bytes",
     )
 
     def __init__(self):
@@ -1950,6 +1953,34 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/registry/report":
             return self._send(200, {"hives": getattr(s, "reg_report", []) or []})
 
+        if path == "/api/logfile":
+            got = getattr(s, "logfile", None)
+            if not got:
+                return self._send(200, {"loaded": False, "records": [],
+                                        "total": 0})
+            recs = got["records"]
+            q = (self._q("q", "") or "").lower()
+            op = self._q("op", "") or ""
+            if q:
+                recs = [r for r in recs if any(
+                    q in n["name"].lower() for n in r.get("names", []))
+                    or q in str(r.get("redo_name", "")).lower()
+                    or q in str(r.get("undo_name", "")).lower()]
+            if op:
+                recs = [r for r in recs if op in (r.get("redo_name"),
+                                                  r.get("undo_name"))]
+            total = len(recs)
+            off = max(0, self._q("offset", 0, int) or 0)
+            n = min(2000, max(1, self._q("limit", 200, int) or 200))
+            return self._send(200, {
+                "loaded": True, "total": total, "offset": off,
+                "records": recs[off:off + n], "report": got["report"],
+                "part": got["part"],
+                "operations": sorted({x for r in got["records"]
+                                      for x in (r.get("redo_name"),
+                                                r.get("undo_name")) if x}),
+            })
+
         if path == "/api/usn":
             got = getattr(s, "usn", None)
             if not got:
@@ -3454,6 +3485,36 @@ class Handler(BaseHTTPRequestHandler):
                 detail="Program presence and execution evidence from the "
                        "compatibility caches.",
                 keep=("appcompat", part)))
+
+        if path == "/api/logfile":
+            part = int(body.get("part") or 0)
+            fs = s.fs(part)
+
+            def run(progress):
+                attr = logfile_mod.find(fs) if hasattr(fs, "record") else None
+                if attr is None:
+                    return {"present": False, "note":
+                            _t("server.logfile.not_found")}
+                try:
+                    report, recs = logfile_mod.read_volume(
+                        fs, attr, progress=progress)
+                except logfile_mod.LogFileError as exc:
+                    return {"present": True, "error": str(exc)}
+                s.logfile = {"part": part, "records": recs, "report": report}
+                st = report["stats"]
+                s.case.log("logfile.read", {
+                    "part": part, "records": st["records"],
+                    "log_pages": st["log_pages"],
+                    "torn_pages": st["torn_pages"]})
+                return {"present": True, "report": report,
+                        "records": st["records"]}
+
+            return self._send(200, s.start_task(
+                "logfile", run, label="Reading the NTFS log",
+                detail="$LogFile is NTFS's crash-recovery log. What is "
+                       "shown is what its restart areas and log records "
+                       "hold, as recorded; no sequence of events is "
+                       "reconstructed."))
 
         if path == "/api/usn":
             part = int(body.get("part") or 0)

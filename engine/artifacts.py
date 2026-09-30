@@ -137,6 +137,16 @@ CATALOGUE = [
         "needs": ["NTFS"],
     },
     {
+        "id": "logfile", "label": "NTFS log ($LogFile)", "cost": MINUTES,
+        "scope": "volume", "method": "POST", "route": "logfile",
+        "per_volume": True,
+        "answers": "What NTFS's crash-recovery log still holds: recent "
+                   "transactions, the operations they performed and, where "
+                   "an entry carries one, a file name and its timestamps. "
+                   "Read as recorded; it is a ring, not a full history.",
+        "needs": ["NTFS"],
+    },
+    {
         "id": "registry", "label": "Well-known registry keys", "cost": MINUTES,
         "scope": "image", "method": "POST", "route": "registry/report", "per_volume": False,
         "answers": "Machine identity, USB devices attached, networks joined, "
