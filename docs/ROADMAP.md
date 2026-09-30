@@ -79,8 +79,14 @@ recognised and refused by name today; these entries are about *reading* it.
 
 ### Filesystems
 
-- [ ] **HFS** (the original, not HFS+), `com.apple.decmpfs` compressed files,
-      and hard links through the private metadata directory.
+- [~] **HFS+ and APFS compression, HFS+ hard links** — `com.apple.decmpfs`
+      files compressed with zlib or LZVN (in the attribute or the resource
+      fork) are decompressed on HFS+ and APFS; HFS+ file hard links read as
+      the file they stand for, and directory hard links are listed with
+      their target. Tested on synthetic volumes (an independent reader,
+      libfshfs, confirmed the builder's hard-link layout). Not done: LZFSE
+      compressed files (listed, contents not shown), APFS hard links, and
+      **HFS** (the original, not HFS+).
 - [~] **APFS snapshots** — snapshots are listed and can be opened as a
       read-only view of the volume. Tested on synthetic images only so far.
 

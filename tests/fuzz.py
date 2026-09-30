@@ -329,6 +329,19 @@ def run_blockfile(data):
     browsercache.parse_blockfile_folder(t.mem(files), "C/x/Cache/Cache_Data")
 
 
+def _hfsplus_seed():
+    import imagebuild_decmpfs as dc
+    import imagebuild_hfsplus as hb
+    value = dc.header(4, 70000)
+    fork = dc.zlib_fork([dc.zlib_block(b) for b in dc.split(bytes(70000))])
+    return hb.build(
+        [hb.File("packed", rsrc=fork, xattrs={"com.apple.decmpfs": value},
+                 owner_flags=0x20),
+         hb.Link("link", 100), hb.DirLink("dirlink", 101)],
+        private_files=[hb.File("iNode100", b"shared", cnid=100)],
+        private_dirs=[hb.Dir("dir_101", [hb.File("in", b"x")], cnid=101)])
+
+
 def _seeds_fs():
     import imagebuild_apfs
     import imagebuild_ext4
@@ -342,6 +355,7 @@ def _seeds_fs():
         "ext4": imagebuild_ext4.build_ext4,
         "ext2": imagebuild_ext4.build_ext2_legacy,
         "apfs": imagebuild_apfs.build_apfs,
+        "hfsplus": _hfsplus_seed,
     }
     try:
         import imagebuild_ntfs
