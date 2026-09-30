@@ -197,8 +197,11 @@ Agreeing with another tool is agreement, not verification.
 
 ## Interface
 
-- [ ] Configurable columns in the folder view, and the filter controls search
-      already has (both can share `filesearch.matches_filters`).
+- [x] Configurable columns in the folder view (saved with the case), and the
+      filter controls search already has, completed with name, created and
+      accessed ranges and hide-deleted. The filters are checked once, in
+      `filesearch.clean_filters`, for search, indexing and hashing alike. The
+      folder listing's own filter box is still a plain name filter.
 - [x] Read-only mode that refuses export and report writing.
 - [ ] Template editor, so an examiner can define a structure without Python.
       The templates in `engine/structure.py` are already declarative enough to

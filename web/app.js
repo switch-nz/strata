@@ -2566,6 +2566,7 @@ const dirView = {
   entries: [], name: '', part: null, id: undefined,
   self: null,
   trail: [],
+  columnsOpen: false,
 };
 
 function resetDirView() {
@@ -2580,6 +2581,7 @@ function resetDirView() {
   dirView.id = undefined;
   dirView.self = null;
   dirView.trail = [];
+  dirView.columnsOpen = false;
   dirView.recursive = false;
   dirView.rootPath = null;
   dirView.truncated = false;
@@ -2742,6 +2744,135 @@ async function listAllBelow(part, e = null) {
                      truncated: r.truncated, budget: r.budget });
 }
 
+// The columns of the folder listing, after the name. The case decides which
+// are shown and in what order (see loadCasePrefs); "path" only has a place in
+// a listing of everything below a folder.
+const FOLDER_COL_IDS = ['path', 'size', 'extension', 'signature', 'created',
+                        'modified', 'accessed', 'md5', 'sha'];
+
+const FOLDER_COLS = {
+  path: {
+    label: () => txt('ui.col.path'),
+    head: th => th('path', txt('ui.col.path'), 'c-path', txt('ui.dir.title_path')),
+    cell: e => `<td class="c-path" title="${esc(e.path || '')}">${
+      esc(folderOf(e))}</td>`,
+  },
+  size: {
+    label: () => txt('ui.kv.size'),
+    head: th => th('size', txt('ui.kv.size')),
+    cell: e => `<td class="sz">${e.is_dir ? '—' : fmt.bytes(e.size)}</td>`,
+  },
+  extension: {
+    label: () => txt('ui.render_dir_view.extension'),
+    head: () => `<th class="c-ty" title="${txt('ui.dir.title_extension')}">${
+      txt('ui.render_dir_view.extension')}</th>`,
+    cell: (e, t) => `<td class="ty2 c-ty">${
+      esc(t ? (t.extension_says || '—') : '')}</td>`,
+  },
+  signature: {
+    label: () => txt('ui.render_dir_view.signature'),
+    head: () => `<th class="c-ty" title="${txt('ui.dir.title_signature')}">${
+      txt('ui.render_dir_view.signature')}</th>`,
+    cell: (e, t, bad) => `<td class="ty2 c-ty${bad ? ' bad' : ''}">${
+      esc(t ? (t.content_is
+        || (t.verdict === 'no signature' ? 'no signature' : '—')) : '')}</td>`,
+  },
+  created: {
+    label: () => txt('ui.kv.created'),
+    head: th => th('created', txt('ui.kv.created')),
+    cell: e => `<td class="dt">${fmt.time(e.created)}</td>`,
+  },
+  modified: {
+    label: () => txt('ui.kv.modified'),
+    head: th => th('modified', txt('ui.kv.modified')),
+    cell: e => `<td class="dt">${fmt.time(e.modified)}</td>`,
+  },
+  accessed: {
+    label: () => txt('ui.kv.accessed'),
+    head: th => th('accessed', txt('ui.kv.accessed')),
+    cell: e => `<td class="dt">${fmt.time(e.accessed)}</td>`,
+  },
+  md5: {
+    label: () => txt('ui.render_dir_view.md5'),
+    head: () => `<th class="c-hash" title="${txt('ui.dir.title_md5')}">${
+      txt('ui.render_dir_view.md5')}</th>`,
+    cell: e => `<td class="ty2 mono c-hash" title="${esc(hashOf(e, 'md5') || '')}">${
+      e.is_dir ? '' : (hashOf(e, 'md5')
+        ? esc(hashOf(e, 'md5').slice(0, 12)) + '…' : '')}</td>`,
+  },
+  sha: {
+    label: () => txt('ui.render_dir_view.sha'),
+    head: () => `<th class="c-hash" title="${txt('ui.dir.title_sha256')}">${
+      txt('ui.render_dir_view.sha')}</th>`,
+    cell: e => `<td class="ty2 mono c-hash" title="${esc(hashOf(e) || '')}">${
+      e.is_dir ? '' : (hashOf(e) ? esc(hashOf(e).slice(0, 12)) + '…' : '')}</td>`,
+  },
+};
+
+// Which columns are drawn, in order. null means the case has not chosen.
+function folderColumnList() {
+  const chosen = S.folderColumns
+    || S.folderColumnsDefault
+    || FOLDER_COL_IDS;
+  return chosen.filter(c => FOLDER_COLS[c]);
+}
+
+function folderColumns() {
+  return folderColumnList().filter(c => c !== 'path' || dirView.recursive);
+}
+
+async function loadCasePrefs() {
+  S.folderColumns = null;
+  S.folderColumnsDefault = null;
+  if (!S.casePath) return;
+  const r = await api.get('case/prefs').catch(() => null);
+  if (!r || r.error) return;
+  S.folderColumns = Array.isArray(r.folder_columns) ? r.folder_columns : null;
+  S.folderColumnsDefault = Array.isArray(r.folder_columns_default)
+    ? r.folder_columns_default : null;
+  if (dirView.id !== undefined && $('#dirlist .dv-list')) renderDirView();
+}
+
+async function saveFolderColumns(list) {
+  S.folderColumns = list;
+  if (!S.casePath) return;
+  const r = await api.post('case/prefs', {
+    case: S.casePath, folder_columns: list,
+  }).catch(() => null);
+  if (!r || r.error) toast(r?.error || txt('messages.columns_not_saved'));
+}
+
+function columnsMenuHTML() {
+  const shown = folderColumnList();
+  const rest = FOLDER_COL_IDS.filter(c => !shown.includes(c));
+  const row = (c, on, i) => `
+    <div class="col-row" data-col="${c}"${c === 'path'
+      ? ` title="${esc(txt('ui.dir.columns_path_note'))}"` : ''}>
+      <label class="check"><input type="checkbox" data-on ${on ? 'checked' : ''}>
+        <span>${esc(FOLDER_COLS[c].label())}</span></label>
+      <span class="col-move">
+        <button class="ghost" data-up ${on && i > 0 ? '' : 'disabled'}
+          title="${esc(txt('ui.dir.columns_up'))}">↑</button>
+        <button class="ghost" data-down ${on && i < shown.length - 1 ? '' : 'disabled'}
+          title="${esc(txt('ui.dir.columns_down'))}">↓</button>
+      </span>
+    </div>`;
+  return `
+    <div class="col-menu" id="col-menu" role="dialog"
+         aria-label="${esc(txt('ui.dir.columns'))}">
+      <div class="col-row is-fixed"><span>${esc(txt('ui.col.name'))}</span>
+        <span class="dim">${esc(txt('ui.dir.columns_always'))}</span></div>
+      ${shown.map((c, i) => row(c, true, i)).join('')}
+      ${rest.map(c => row(c, false, -1)).join('')}
+      <div class="col-foot">
+        <span class="dim">${esc(S.casePath
+          ? txt('ui.dir.columns_saved_in_case')
+          : txt('ui.dir.columns_session_only'))}</span>
+        <button class="ghost" id="col-reset">${esc(txt('ui.dir.columns_reset'))}</button>
+      </div>
+    </div>`;
+}
+
 function renderDirView() {
   const { name, part } = dirView;
   const nav = navEntries();
@@ -2762,9 +2893,15 @@ function renderDirView() {
              value="${esc(dirView.filter)}">
       <span class="dv-count">${fmt.count(matched.length)}/${
         fmt.count(dirView.entries.length)}</span>
+      ${dirView.mode === 'gallery' ? '' : `<span class="col-wrap">
+        <button class="ghost" id="dv-columns" aria-haspopup="dialog"
+          aria-expanded="${dirView.columnsOpen ? 'true' : 'false'}"
+          title="${esc(txt('ui.dir.columns_title'))}">${esc(txt('ui.dir.columns'))}</button>
+        ${dirView.columnsOpen ? columnsMenuHTML() : ''}</span>`}
     </div>`;
 
   const wide = dirView.recursive;
+  const cols = folderColumns();
 
   const rowsHTML = (from, to) => entries.slice(from, to).map((e, n) => {
     const i = from + n;
@@ -2779,20 +2916,7 @@ function renderDirView() {
       esc(e.name)}${e._nav ? ` <span class="mis">${esc(e._label)}</span>` : ''}${
       bad ? ` <span class="mis" title="${esc(t.why)}">renamed?</span>` : ''}${
       mk ? ` <span class="hash-flag ${esc(mk)}">${esc(mk.replace('_', ' '))}</span>` : ''}</td>
-          ${wide ? `<td class="c-path" title="${esc(e.path || '')}">${
-        esc(folderOf(e))}</td>` : ''}
-          <td class="sz">${e.is_dir ? '—' : fmt.bytes(e.size)}</td>
-          <td class="ty2 c-ty">${esc(t ? (t.extension_says || '—') : '')}</td>
-          <td class="ty2 c-ty${bad ? ' bad' : ''}">${esc(t ? (t.content_is
-        || (t.verdict === 'no signature' ? 'no signature' : '—')) : '')}</td>
-          <td class="dt">${fmt.time(e.created)}</td>
-          <td class="dt">${fmt.time(e.modified)}</td>
-          <td class="dt">${fmt.time(e.accessed)}</td>
-          <td class="ty2 mono c-hash" title="${esc(hashOf(e, 'md5') || '')}">${
-      e.is_dir ? '' : (hashOf(e, 'md5')
-        ? esc(hashOf(e, 'md5').slice(0, 12)) + '…' : '')}</td>
-          <td class="ty2 mono c-hash" title="${esc(hashOf(e) || '')}">${
-      e.is_dir ? '' : (hashOf(e) ? esc(hashOf(e).slice(0, 12)) + '…' : '')}</td>
+          ${cols.map(c => FOLDER_COLS[c].cell(e, t, bad)).join('')}
         </tr>`;
   }).join('');
 
@@ -2823,15 +2947,7 @@ function renderDirView() {
       }"${title ? ` title="${esc(title)}"` : ''}>${label}</th>`;
     body = `<table class="dv-list${wide ? ' is-flat' : ''}">
       <thead><tr>${th('name', txt('ui.col.name'))}${
-        wide ? th('path', txt('ui.col.path'), 'c-path',
-                  txt('ui.dir.title_path')) : ''}${th('size', txt('ui.kv.size'))}
-        <th class="c-ty" title="${txt('ui.dir.title_extension')}">${txt('ui.render_dir_view.extension')}</th>
-        <th class="c-ty" title="${txt('ui.dir.title_signature')}">${txt('ui.render_dir_view.signature')}</th>
-        ${th('created', txt('ui.kv.created'))}${th('modified', txt('ui.kv.modified'))}
-        ${th('accessed', txt('ui.kv.accessed'))}
-        <th class="c-hash" title="${txt('ui.dir.title_md5')}">${txt('ui.render_dir_view.md5')}</th>
-        <th class="c-hash" title="${txt('ui.dir.title_sha256')}"
-          >${txt('ui.render_dir_view.sha')}</th></tr></thead>
+        cols.map(c => FOLDER_COLS[c].head(th)).join('')}</tr></thead>
       <tbody>${rowsHTML(0, shown)}</tbody></table>`;
     if (!dirView.entries.length) {
       body += `<p class="empty">${txt('messages.empty_directory')}</p>`;
@@ -2932,6 +3048,7 @@ function renderDirView() {
       dirView.shown = PAGE_ROWS;
       renderDirView();
     }));
+  wireColumnsMenu();
   const f = $('#dv-filter');
   if (f) {
     f.addEventListener('input', () => {
@@ -2945,6 +3062,62 @@ function renderDirView() {
     });
   }
 }
+
+function wireColumnsMenu() {
+  $('#dv-columns')?.addEventListener('click', ev => {
+    ev.stopPropagation();
+    dirView.columnsOpen = !dirView.columnsOpen;
+    renderDirView();
+    $(dirView.columnsOpen ? '#col-menu input' : '#dv-columns')?.focus();
+  });
+  const menu = $('#col-menu');
+  if (!menu) return;
+  // Fixed, from the button's own position: the listing pane is short and
+  // clips anything drawn inside it.
+  const at = $('#dv-columns').getBoundingClientRect();
+  menu.style.top = Math.round(at.bottom + 4) + 'px';
+  menu.style.right = Math.max(8, Math.round(window.innerWidth - at.right)) + 'px';
+  menu.style.maxHeight = Math.max(160, window.innerHeight - at.bottom - 24) + 'px';
+  menu.addEventListener('click', ev => ev.stopPropagation());
+  const change = async list => {
+    await saveFolderColumns(list);
+    renderDirView();
+  };
+  $$('#col-menu .col-row[data-col]').forEach(row => {
+    const c = row.dataset.col;
+    row.querySelector('[data-on]').addEventListener('change', ev => {
+      const now = folderColumnList().filter(x => x !== c);
+      change(ev.target.checked ? [...now, c] : now);
+    });
+    const move = by => {
+      const list = folderColumnList();
+      const i = list.indexOf(c);
+      const j = i + by;
+      if (i < 0 || j < 0 || j >= list.length) return;
+      [list[i], list[j]] = [list[j], list[i]];
+      change(list);
+    };
+    row.querySelector('[data-up]')?.addEventListener('click', () => move(-1));
+    row.querySelector('[data-down]')?.addEventListener('click', () => move(1));
+  });
+  $('#col-reset')?.addEventListener('click', async () => {
+    await saveFolderColumns(null);
+    renderDirView();
+  });
+}
+
+function closeColumnsMenu() {
+  if (!dirView.columnsOpen) return;
+  dirView.columnsOpen = false;
+  if ($('#col-menu')) renderDirView();
+}
+document.addEventListener('click', closeColumnsMenu);
+document.addEventListener('keydown', ev => {
+  if (ev.key === 'Escape' && dirView.columnsOpen) {
+    closeColumnsMenu();
+    $('#dv-columns')?.focus();
+  }
+});
 
 let pvToken = null;
 
@@ -5443,19 +5616,34 @@ function parseSize(s) {
 function currentFilters() {
   const exts = $('#f-ext').value.split(',').map(s => s.trim().replace(/^\./, '')
     .toLowerCase()).filter(Boolean);
+  const dayEnd = id => $(id).value ? $(id).value + 'T23:59:59Z' : null;
   const f = {
+    name: $('#f-name').value.trim() || null,
     extensions: exts.length ? exts : null,
     min_size: parseSize($('#f-min').value),
     max_size: parseSize($('#f-max').value),
     modified_after: $('#f-mod-after').value || null,
-    modified_before: $('#f-mod-before').value
-      ? $('#f-mod-before').value + 'T23:59:59Z' : null,
+    modified_before: dayEnd('#f-mod-before'),
+    created_after: $('#f-cr-after').value || null,
+    created_before: dayEnd('#f-cr-before'),
+    accessed_after: $('#f-ac-after').value || null,
+    accessed_before: dayEnd('#f-ac-before'),
     deleted_only: $('#f-deleted').checked,
+    hide_deleted: $('#f-hide-deleted').checked,
     files_only: $('#f-files').checked,
   };
   return Object.fromEntries(Object.entries(f).filter(([, v]) =>
     v !== null && v !== false));
 }
+
+// "Deleted only" and "hide deleted" contradict each other, so switching one on
+// switches the other off.
+$('#f-deleted')?.addEventListener('change', () => {
+  if ($('#f-deleted').checked) $('#f-hide-deleted').checked = false;
+});
+$('#f-hide-deleted')?.addEventListener('change', () => {
+  if ($('#f-hide-deleted').checked) $('#f-deleted').checked = false;
+});
 
 async function doFind() {
   const partVal = $('#find-scope').value;
@@ -8544,6 +8732,7 @@ function applyEmptyCase(r) {
   S.volumes = null;
   S.caseInfo = r.case;
   S.casePath = next;
+  loadCasePrefs();
   S.exhibits = [];
   S.activeId = null;
   startPulse();
@@ -8944,6 +9133,7 @@ function applyOpened(r, { tree = true } = {}) {
   S.volumes = r.volumes;
   S.caseInfo = r.case;
   S.casePath = r.case_path || null;
+  loadCasePrefs();
   S.exhibits = r.evidence || [];
   S.activeId = r.active_id ?? null;
   S.evidenceId = r.evidence_id ?? null;
@@ -9368,6 +9558,8 @@ function applyNoCase() {
   S.volumes = null;
   S.caseInfo = null;
   S.casePath = null;
+  S.folderColumns = null;
+  S.folderColumnsDefault = null;
   S.exhibits = [];
   S.activeId = null;
   S.evidenceId = null;

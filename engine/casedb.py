@@ -10,6 +10,7 @@ import time
 import zlib
 from urllib.request import pathname2url
 
+from . import casepref
 from . import fuzzyhash
 from . import version as version_mod
 from .text import t as _t
@@ -982,6 +983,25 @@ class Case:
     def get(self, k, default=None):
         r = self.db.execute("SELECT value FROM meta WHERE key=?", (k,)).fetchone()
         return r["value"] if r else default
+
+    def folder_columns(self):
+        """The folder-listing columns this case shows, in order, or None for
+        the default set. A display preference shared by everyone who opens
+        the case; it changes nothing that was found, so it is not an entry
+        in the audit log."""
+        return casepref.load_folder_columns(
+            self.get(casepref.meta_key("folder_columns")))
+
+    @_writes
+    def set_folder_columns(self, columns):
+        columns = casepref.clean_folder_columns(columns)
+        key = casepref.meta_key("folder_columns")
+        if columns is None:
+            self.db.execute("DELETE FROM meta WHERE key=?", (key,))
+        else:
+            self._set(key, json.dumps(columns))
+        self.db.commit()
+        return columns
 
     def pulse(self):
         row = self.db.execute(

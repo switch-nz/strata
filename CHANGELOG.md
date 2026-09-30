@@ -13,6 +13,18 @@ records, not how the code changed.
 
 ### Added
 
+- **The folder listing's columns can be chosen, and search has the rest of
+  its filters.** A Columns button on the folder listing shows or hides each
+  column (size, extension, signature, created, modified, accessed, MD5,
+  SHA-256, and path in a listing of everything below a folder) and moves
+  them earlier or later. The choice is saved with the case, so everyone who
+  opens the case sees the same columns; with no case open it lasts until the
+  page is reloaded. Search, indexing and hashing filters gain name, created
+  and accessed date ranges and "hide deleted" (which switches off "deleted
+  only", since both together could match nothing). A filter that is
+  misspelt or could not match anything is now refused with the reason,
+  instead of silently matching everything.
+
 - **QCOW2 and VirtualBox VDI disk images can be opened.** Both were refused
   by name before. QCOW2 (versions 2 and 3, including compressed clusters) and
   VDI (dynamic and fixed) are read like any other disk, with unwritten space

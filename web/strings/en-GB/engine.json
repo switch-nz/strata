@@ -340,5 +340,18 @@
   "qcow2.features_unknown": "This QCOW2 sets incompatible feature bits Strata does not know (0x%X), so it may not be read correctly.",
   "qcow2.cluster_bits_invalid": "The QCOW2 header declares a cluster size of 2^%d bytes, which is not a size the format allows.",
   "qcow2.l1_unreadable": "The QCOW2's L1 table is misplaced or runs past the end of the file, so where its data is cannot be read.",
-  "qcow2.qcow2_stores_acquisition_hash": "A QCOW2 stores no acquisition hash, so there is nothing to verify this against. The digests above are of the disk as presented now."
+  "qcow2.qcow2_stores_acquisition_hash": "A QCOW2 stores no acquisition hash, so there is nothing to verify this against. The digests above are of the disk as presented now.",
+  "casepref.columns_not_list": "The folder columns must be a list of column names.",
+  "casepref.column_unknown": "%r is not a folder column Strata has.",
+  "casepref.nothing_to_set": "There is no preference in the request to set.",
+  "filters.not_object": "The filters must be an object.",
+  "filters.name_bad": "The name filter must be text of at most %d characters.",
+  "filters.extensions_bad": "The extensions filter must be a list of at most %d extensions.",
+  "filters.size_bad": "%s must be a whole number of bytes, zero or more.",
+  "filters.date_bad": "%s must be a date (YYYY-MM-DD) or a UTC date and time.",
+  "filters.flag_bad": "%s can only be switched on; leave it out to switch it off.",
+  "filters.unknown": "%s is not a filter Strata has.",
+  "filters.deleted_conflict": "Deleted only and hide deleted cannot both be on: nothing could match.",
+  "filters.size_range": "The smallest size is larger than the largest, so nothing could match.",
+  "filters.date_range": "The %s-after date is later than its before date, so nothing could match."
 }
