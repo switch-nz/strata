@@ -171,8 +171,13 @@ def _field(fields, name):
 
 def describe(provider, event_id, fields=None):
     """A one-line description, or None when (provider, ID) is not known."""
+    # A provider or ID that arrived as a list or a number (an array or an
+    # unexpected type through a template substitution) is simply not in the
+    # table; it must not stop the log from being read.
+    if not isinstance(provider, str):
+        return None
     eid = _int(event_id)
-    text = TABLE.get(provider or "", {}).get(eid)
+    text = TABLE.get(provider, {}).get(eid)
     if text is None:
         return None
     if (provider, eid) in _WITH_LOGON_TYPE:

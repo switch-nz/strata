@@ -17,6 +17,128 @@ records, not how the code changed.
   Windows 7 volumes using AES-CBC with the Elephant diffuser (encryption
   methods 0x8000/0x8001) are now decrypted, not just identified. Previously
   these volumes were refused outright.
+- **QCOW2 and VirtualBox VDI disk images can be opened.** Both were refused
+  by name before. QCOW2 (versions 2 and 3, including compressed clusters) and
+  VDI (dynamic and fixed) are read like any other disk, with unwritten space
+  reading as zeros and anything odd in the file reported as a finding on the
+  image. A disk that holds only a change from another disk, a QCOW2 with a
+  backing file or a differencing or undo VDI, is refused with the reason
+  rather than shown as though it were whole; so are encrypted QCOW2 disks
+  and the QCOW2 variants Strata cannot read (external data file, subcluster
+  tables, zstd compression). Tested on synthetic images only; DMG and AFF4
+  are still refused.
+
+### Fixed
+
+- **Sweeping event logs across a volume could use large amounts of memory
+  and could not be cancelled promptly.** Every log was read whole and every
+  event kept before the newest were picked. Logs are now read a chunk at a
+  time, only the newest events are kept, cancelling takes effect within a
+  chunk, and a log that stops being readable partway keeps what was read and
+  says so.
+- **Events from deleted event logs were merged among the live ones with
+  nothing to tell them apart.** The volume-wide Events timeline also read
+  `.evtx` files that had been deleted, whose clusters may have been reused
+  since, so an event could come from data that is not what the log once
+  held. Those logs and each of their events are now marked "deleted", a note
+  says why they need care, the log filter labels them, and a checkbox hides
+  them. An unreadable deleted file says it is deleted, and a live log is
+  listed before a deleted one at the same path.
+- **A differencing VHD could show a stale file listing after its parent was
+  replaced.** The saved listing of an NTFS volume was checked against the
+  child disk's size and time only, but a differencing disk shows mostly what
+  its parent holds. Replacing the parent with another disk of the same
+  identifier left the old listing in place. Each parent's size and time are
+  now part of the check, so a changed or missing parent rebuilds the listing;
+  disks without a parent are checked exactly as before.
+- **After reloading the page, every date fell back to UTC.** The time zone
+  applied to a case was only loaded when a case or image was opened, not when
+  the page was refreshed with one already open, so dates showed UTC (and
+  notes disagreed with the report) until the zone was applied again. The
+  applied zone is now restored on reload.
+- **Case note times ignored the case's time zone and the time-display
+  setting.** Notes always showed UTC, while every other date in the interface
+  and the HTML report showed the applied zone, so one note could carry two
+  different times. Notes now use the same display as everything else, and
+  switch when the zone or the setting changes.
+- **Text from an image was shown unescaped in the exhibit details, so a
+  crafted name could run script in Strata.** The exhibit's name, format,
+  acquisition fields (case and evidence numbers, examiner, tool), stored
+  hashes and structural findings were written into the page as markup. A
+  file name such as `<img src=x onerror=...>.vhd`, reachable now that a
+  differencing disk's parent is opened by the name the disk records, executed
+  when the exhibit was selected. Every one of these values is now shown as
+  plain text.
+- **The exhibit details did not show a differencing VHD's parent.** They now
+  list the parent disk and how it was found.
+- **A differencing VHD could read its parent from any file on the machine.**
+  A disk records where its parent lives, and that path was followed. Only the
+  file name it records is used now, and only in the disk's own folder, so a
+  crafted disk cannot make Strata open other files. A symbolic link named
+  like the parent is not followed either, and the refusal says so.
+- **A differencing VHD's refusal did not say which file was at fault, and a
+  wrong file could hide the right one.** A damaged or wrong parent was
+  reported as if the child were damaged; and if one recorded name led to the
+  wrong disk, the correct parent recorded elsewhere in the same disk was never
+  tried. Every recorded name is now tried, and a refusal names each file it
+  rejected and why.
+- **A dynamic VHD read its own footer as disk data when a block ran into
+  it**, and said nothing if a block ended exactly at the file's end. Reads
+  now stop where the footer begins, and a block that would run past that
+  point is reported.
+- **A crafted VHD could use about eleven times its own size in memory just by
+  being opened.** The block table is now stored compactly and read only as far
+  as the disk's size needs.
+- **Adding a differencing VHD to a case that held its parent moved the
+  parent's tags onto the child.** The two show the same volume, but as
+  different states of it, and the parent is still an exhibit. Tags now stay
+  where they are between a disk, its parents and its other children; tags
+  still follow a volume that is re-acquired as an unrelated image.
+- **A case did not record which parent files a differencing VHD was read
+  through.** They are now stored with the exhibit and written to the audit
+  log when it is added and when it is opened.
+- **The refusal for a VHD whose end of file is missing gave outdated advice**
+  ("convert it"). It now says the file is probably truncated or damaged at
+  the end and asks for a complete copy.
+- **One odd event record could stop a whole volume's event logs being
+  merged.** A record whose time was stored as something other than a
+  timestamp made the merge fail for every log on the volume. Such a record
+  now takes the time its log wrote it, and the rest are unaffected.
+- **A single unusual event record made a whole log unreadable.** A provider
+  name stored as a list, or a level written as a character that only looks
+  like a digit, failed the entire log in both the log viewer and the volume
+  timeline, though logs with such records opened before this version. They
+  now read, with no description for an event whose provider is not a name.
+- **An event log larger than 256 MiB was read only in part, without saying
+  so.** Records past that point were missing from the volume timeline. The
+  log's summary now says how much was read and that later records are not
+  included.
+- **The Events tab said "oldest first" above a list that shows the newest
+  first.** The heading now says which.
+- **Opening another case could leave the Notes panel showing the previous
+  case's notes, and Withdraw or Edit then changed a different note in the new
+  case.** Notes are now reloaded whenever a case or image is opened, and every
+  change names the case the note was read from; a request from a page still
+  showing another case is refused and the notes on screen are reloaded.
+- **Notes could not be read or written in a case with no exhibit loaded**, so
+  a new case, or one opened without evidence, showed "No notes" even when it
+  held some. Notes belong to the case and now work there.
+- **Two Strata instances editing the same note at once could split it in
+  two, or lose a withdrawal.** The check and the write now happen under the
+  case database's write lock, so exactly one edit wins.
+- **Another examiner's withdrawal never appeared in your Notes panel until
+  you acted on the note and were refused.** Withdrawals now refresh the
+  panel, and an edit by someone else is no longer announced as "added 1
+  item".
+- **A refresh of the Notes panel discarded an edit in progress.** Your
+  unsaved text now stays where it is; if the note was withdrawn or replaced
+  meanwhile, the text is moved into the new-note box with a message.
+- **A note longer than 20,000 characters was silently cut.** It is now
+  refused, with a message, so a note never records less than its writer
+  wrote.
+- **The report showed an edited note under its creation time**, and lost the
+  line breaks in earlier versions. It now says who wrote the current version
+  and when, and keeps earlier versions' line breaks.
 
 ## [0.7.0] - 2026-09-28
 

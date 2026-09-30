@@ -201,7 +201,10 @@ class DifferencingVhd(VhdCase):
     def test_info_names_the_parent_and_how_it_was_found(self):
         info = self.child().info()
         self.assertEqual(info["segments"], ["child.vhd", "base.vhd"])
-        self.assertEqual(info["acquisition"]["parent"], self.parent_path)
+        # Resolved on both sides: a temp directory can sit behind a symlink
+        # (macOS keeps /var/folders under /private/var).
+        self.assertEqual(os.path.realpath(info["acquisition"]["parent"]),
+                         os.path.realpath(self.parent_path))
         self.assertEqual(info["acquisition"]["parent found by"],
                          "parent name in the disk's header, beside this file")
 
@@ -270,6 +273,89 @@ class DifferencingVhd(VhdCase):
         self.assertIn("already in the chain", str(cm.exception))
 
 
+    def test_a_symlink_named_like_the_parent_is_not_followed(self):
+        outside = os.path.join(self._tmp.name, "elsewhere")
+        os.mkdir(outside)
+        real = os.path.join(outside, "base.vhd")
+        os.rename(self.parent_path, real)
+        try:
+            os.symlink(real, self.parent_path)
+        except (OSError, NotImplementedError, AttributeError):
+            self.skipTest("symlinks are not available here")
+        with self.assertRaises(ewf.UnsupportedContainer) as cm:
+            self.child()
+        self.assertIn("symbolic link", str(cm.exception))
+
+    def test_a_damaged_parent_is_named_in_the_refusal(self):
+        with open(self.parent_path, "r+b") as fh:
+            fh.seek(-100, os.SEEK_END)
+            fh.write(b"\xFF")
+        with self.assertRaises(ewf.UnsupportedContainer) as cm:
+            self.child()
+        text = str(cm.exception)
+        self.assertIn("base.vhd could not be read as a VHD", text)
+        self.assertIn("fails its own checksum", text)
+
+    def test_a_wrong_file_named_by_a_locator_does_not_hide_the_right_one(self):
+        other, _ = build.sparse(DISK, {0: (pattern(BS, 99), None)},
+                                block_size=BS)
+        self.write(other, "other.vhd")
+        # The locator names a present-but-wrong disk; the header names the
+        # right one.
+        img = self.child(parent_name="base.vhd", locators=[
+            (b"W2ru", ".\\other.vhd".encode("utf-16-le"))])
+        self.assertEqual(img.read_at(0, DISK), self.want)
+        self.assertEqual(img.info()["acquisition"]["parent found by"],
+                         "parent name in the disk's header, beside this file")
+
+    def test_parent_paths_lists_the_chain(self):
+        img = self.child()
+        self.assertEqual(img.parent_paths(),
+                         [os.path.realpath(self.parent_path)])
+
+
+class SparseBounds(VhdCase):
+
+    def test_a_block_running_into_the_footer_never_returns_it_as_data(self):
+        data, _ = build.sparse(DISK, {0: (pattern(BS, 1), None)},
+                               block_size=BS)
+        # The block ends 512 bytes past where the footer begins.
+        cut = data[:-512 - 512] + data[-512:]
+        img = self.open(cut)
+        got = img.read_at(0, BS)
+        self.assertNotIn(b"conectix", got)
+        self.assertTrue(any("runs past the end of the disk data" in f
+                            for f in img.findings))
+
+    def test_a_block_that_ends_exactly_at_the_footer_is_not_flagged(self):
+        data, _ = build.sparse(DISK, {4: (pattern(BS, 4), None)},
+                               block_size=BS)
+        img = self.open(data)
+        self.assertEqual(img.read_at(4 * BS, BS), pattern(BS, 4))
+        self.assertEqual(img.findings, [])
+
+    def test_a_table_cannot_be_larger_than_the_disk_needs(self):
+        # The header declares a million entries for a five-block disk.
+        data, _ = build.sparse(DISK, {0: (pattern(BS, 1), None)},
+                               block_size=BS, table_entries=1000000)
+        img = self.open(data)
+        self.assertEqual(len(img._bat), 5)
+        self.assertEqual(img.read_at(0, BS), pattern(BS, 1))
+
+    def test_table_memory_is_about_four_bytes_an_entry(self):
+        import tracemalloc
+        blocks = {i: (b"\x00" * 512, None) for i in range(0)}
+        data, _ = build.sparse(2000 * 512, blocks, block_size=512)
+        path = self.write(data)
+        tracemalloc.start()
+        img = vhd.VhdImage(path)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        self.addCleanup(img.close)
+        self.assertEqual(len(img._bat), 2000)
+        self.assertLess(peak, 64 * 1024)
+
+
 class DamagedSparse(VhdCase):
     def test_corrupt_dynamic_header_is_refused(self):
         data, _ = build.sparse(DISK, {0: (pattern(BS, 1), None)},
@@ -286,7 +372,7 @@ class DamagedSparse(VhdCase):
         img = self.open(cut)
         got = img.read_at(0, BS)
         self.assertEqual(len(got), BS)
-        self.assertTrue(any("past the end of the file" in f
+        self.assertTrue(any("runs past the end of the disk data" in f
                             for f in img.findings))
 
     def test_random_damage_never_crashes(self):

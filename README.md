@@ -24,6 +24,8 @@ is a synthetic volume: every byte of it was generated for this screenshot.*
 | VMDK | flat, sparse, and stream-optimized |
 | VHDX | fixed and dynamic; a differencing disk is detected and reported, not merged |
 | VHD | fixed, dynamic and differencing; a differencing disk is read through its parent, which must be the exact disk it was made from |
+| VDI | VirtualBox dynamic and fixed disks; a differencing or undo disk is refused, since it holds only a change from another disk |
+| QCOW2 | versions 2 and 3, including compressed clusters; an encrypted disk, or one with a backing file, external data file, subcluster tables or non-zlib compression, is refused |
 | AD1 | AccessData logical images |
 
 **Logical evidence** — a folder, a zip, or a single file opened as an exhibit

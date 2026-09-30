@@ -163,6 +163,25 @@ def _within(root, candidate):
 class TaskCancelled(Exception):
     pass
 
+class LogReader:
+    """A file read a piece at a time, so a sweep over big event logs holds a
+    chunk of one and not the whole file."""
+
+    def __init__(self, fs, entry):
+        self.fs = fs
+        self.entry = entry
+        self.size = int(entry.get("size") or 0)
+
+    def read_at(self, offset, length):
+        length = min(length, self.size - offset)
+        if offset < 0 or length <= 0:
+            return b""
+        ranged = getattr(self.fs, "read_range", None)
+        if ranged is not None:
+            return ranged(self.entry, offset, length)
+        return self.fs.read_file(self.entry, offset + length)[
+            offset:offset + length]
+
 class FileRegion:
 
     def __init__(self, fs, entry, size, stream="", cache=None):
@@ -449,18 +468,25 @@ class Session:
             if not add:
                 self.items = {}
                 self.active_id = None
-        ev_id = self.case.add_evidence(path, img.info())
+        # A differencing disk reads through its parents; which files those
+        # were is part of what the exhibit is.
+        parents_of = getattr(img, "parent_paths", None)
+        parents = parents_of() if callable(parents_of) else []
+        ev_id = self.case.add_evidence(path, img.info(), parents=parents)
         item = Evidence(path, ev_id, image=img)
         self.items[ev_id] = item
         self.active_id = ev_id
         self.case.log("evidence.open", {"path": path, "evidence_id": ev_id,
                                         "alongside": len(self.items) - 1,
+                                        "parents": parents or None,
                                         "tool": version_mod.label()})
         if self.case is not None:
             try:
                 found = volume_mod.identities(img, item.volumes)
                 self.case.register_volumes(ev_id, found)
-                self.case.reassociate_tags(ev_id, found)
+                self.case.reassociate_tags(
+                    ev_id, found,
+                    skip=self.case.related_evidence(path, parents))
             except Exception as exc:
                 # Identity extraction or remap errors must never turn an
                 # open into a failure; the audit chain records the miss.
@@ -704,7 +730,10 @@ class Session:
         if not cache:
             return
         path = treecache_mod.path_for(cache, ev.path, offset, snap=snap)
-        want = treecache_mod.stamp(ev.path, offset, snap=snap)
+        parents_of = getattr(ev.image, "parent_paths", None)
+        want = treecache_mod.stamp(
+            ev.path, offset, snap=snap,
+            parents=parents_of() if callable(parents_of) else ())
         fs.tree_store = (lambda: treecache_mod.load(path, want),
                          lambda tree: treecache_mod.save(path, tree, want))
 
@@ -1158,6 +1187,14 @@ class Handler(BaseHTTPRequestHandler):
                 "tasks": items,
                 "running": sum(1 for t in items if t["state"] == "running"),
             })
+
+        if path == "/api/notes":
+            # Notes belong to the case, not an exhibit: a case with no
+            # evidence loaded still has them.
+            if not s.case:
+                return self._send(400, {"error": _t("server.export.case_open")})
+            return self._send(200, {"case": s.case.path, "notes": s.case.notes(
+                include_retracted=self._q("retracted", "") in ("1", "true"))})
 
         if not s.image:
             return self._send(409, {"error": _t("server.case_peek.evidence_open")})
@@ -1833,12 +1870,6 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/bookmarks":
             return self._send(200, s.case.bookmarks(s.evidence_id))
 
-        if path == "/api/notes":
-            if not s.case:
-                return self._send(400, {"error": _t("server.export.case_open")})
-            return self._send(200, {"notes": s.case.notes(
-                include_retracted=self._q("retracted", "") in ("1", "true"))})
-
         if path == "/api/bookmark/categories":
             return self._send(200, {"categories": casedb_mod.MARK_CATEGORIES})
 
@@ -2492,6 +2523,34 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"unavailable": str(exc)})
             return self._send(200, {"path": chosen, "cancelled": not chosen})
 
+        if path in ("/api/note", "/api/note/edit", "/api/note/retract"):
+            if not s.case:
+                return self._send(400, {"error": _t("server.export.case_open")})
+            # The id is only meaningful in the case the note was read from;
+            # a page still showing another case's notes must not act here.
+            shown = body.get("case")
+            if not shown or os.path.abspath(shown) != \
+                    os.path.abspath(s.case.path):
+                return self._send(409, {"error": _t("server.note.other_case"),
+                                        "case": s.case.path,
+                                        "notes": s.case.notes()})
+            if path == "/api/note/retract":
+                ok = s.case.retract_note(int(body.get("id") or 0))
+                return self._send(200 if ok else 409, {
+                    "retracted": ok, "notes": s.case.notes()} if ok else
+                    {"error": _t("server.note.not_current")})
+            try:
+                if path == "/api/note":
+                    nid = s.case.add_note(body.get("body"))
+                else:
+                    nid = s.case.edit_note(int(body.get("id") or 0),
+                                           body.get("body"))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            if nid is None:
+                return self._send(409, {"error": _t("server.note.not_current")})
+            return self._send(200, {"id": nid, "notes": s.case.notes()})
+
         if not s.image:
             return self._send(409, {"error": _t("server.case_peek.evidence_open")})
 
@@ -2739,26 +2798,6 @@ class Handler(BaseHTTPRequestHandler):
                               {"updated": ok} if ok else
                               {"error": _t("server.bookmark_update.such_bookmark")})
 
-        if path in ("/api/note", "/api/note/edit", "/api/note/retract"):
-            if not s.case:
-                return self._send(400, {"error": _t("server.export.case_open")})
-            if path == "/api/note/retract":
-                ok = s.case.retract_note(int(body.get("id") or 0))
-                return self._send(200 if ok else 409, {
-                    "retracted": ok, "notes": s.case.notes()} if ok else
-                    {"error": _t("server.note.not_current")})
-            try:
-                if path == "/api/note":
-                    nid = s.case.add_note(body.get("body"))
-                else:
-                    nid = s.case.edit_note(int(body.get("id") or 0),
-                                           body.get("body"))
-            except ValueError as exc:
-                return self._send(400, {"error": str(exc)})
-            if nid is None:
-                return self._send(409, {"error": _t("server.note.not_current")})
-            return self._send(200, {"id": nid, "notes": s.case.notes()})
-
         if path == "/api/bookmark/remove":
             ok = s.case.remove_bookmark(int(body["id"]))
             return self._send(200, {"removed": ok})
@@ -2871,10 +2910,12 @@ class Handler(BaseHTTPRequestHandler):
                              if not e.get("is_dir") and (e.get("size") or 0)
                              and (e.get("name") or "").lower()
                              .endswith(".evtx")]
-                    found.sort(key=lambda e: (e.get("path") or "").lower())
+                    # A live log sorts before a deleted one of the same path.
+                    found.sort(key=lambda e: ((e.get("path") or "").lower(),
+                                              bool(e.get("deleted"))))
                     logs = [(e.get("name"), e.get("path"),
-                             (lambda e=e: fs.read_file(
-                                 e, evtx_mod.LOG_READ_MAX)))
+                             LogReader(fs, e), e.get("size"),
+                             bool(e.get("deleted")))
                             for e in found]
                     r = evtx_mod.sweep(logs, progress=progress)
                     for row, e in zip(r["logs"], found):
