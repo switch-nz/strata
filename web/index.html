@@ -602,8 +602,58 @@
     </label>
     <div id="browser" class="browser"></div>
     <menu>
+      <button type="button" class="ghost" id="open-raid" data-i18n="ui.raid.open_button"></button>
       <button value="cancel" class="ghost" data-i18n="ui.open.cancel"></button>
       <button value="ok" class="solid" id="open-confirm" data-i18n="ui.open.confirm"></button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-raid">
+  <form method="dialog" class="dlg dlg-raid" id="raid-form">
+    <h2 data-i18n="ui.raid.title"></h2>
+    <p class="hint" data-i18n="help.raid.intro"></p>
+    <label class="field">
+      <span data-i18n="ui.raid.name"></span>
+      <input type="text" id="raid-name" maxlength="80">
+    </label>
+    <div class="row raid-params">
+      <label class="row"><span data-i18n="ui.raid.level"></span>
+        <select id="raid-level">
+          <option value="0">RAID 0</option>
+          <option value="1">RAID 1</option>
+          <option value="5" selected>RAID 5</option>
+        </select></label>
+      <label class="row" id="raid-chunk-field"><span data-i18n="ui.raid.chunk"></span>
+        <select id="raid-chunk"></select>
+        <input type="text" id="raid-chunk-custom" hidden size="9"></label>
+      <label class="row" id="raid-layout-field"><span data-i18n="ui.raid.layout"></span>
+        <select id="raid-layout"></select></label>
+    </div>
+    <p class="hint" id="raid-layout-hint"></p>
+    <div id="raid-members" class="raid-members"></div>
+    <div class="row">
+      <button type="button" class="ghost" id="raid-add-member" data-i18n="ui.raid.add_member"></button>
+      <span class="hint" data-i18n="ui.raid.pick_hint"></span>
+    </div>
+    <div id="raid-case-fields">
+      <label class="field" id="raid-examiner-field">
+        <span data-i18n="ui.open.examiner"></span>
+        <input type="text" id="raid-examiner">
+      </label>
+      <label class="field" id="raid-case-field">
+        <span data-i18n="ui.open.case_file"></span>
+        <input type="text" id="raid-case">
+      </label>
+      <p class="hint" id="raid-add-note" hidden></p>
+    </div>
+    <input type="hidden" id="raid-pick">
+    <div id="raid-browser" class="browser"></div>
+    <div id="raid-check" class="raid-check" aria-live="polite"></div>
+    <menu>
+      <button type="button" class="ghost" id="raid-cancel" data-i18n="ui.open.cancel"></button>
+      <button type="button" class="ghost" id="raid-test" data-i18n="ui.raid.check"></button>
+      <button type="button" class="solid" id="raid-open" data-i18n="ui.raid.assemble"></button>
     </menu>
   </form>
 </dialog>

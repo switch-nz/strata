@@ -125,5 +125,6 @@
   },
   "who.attribution": "This is what the audit log records against everything you do. It is <strong>stated, and not verified</strong> — the server does not authenticate anyone, and this name is an attribution, not proof of who performed an action. Changing it mid-session is recorded as its own entry; earlier work keeps the name it was done under.",
   "why_bytes_intact_shown_below_export_writes": "{why} The bytes are intact and shown below; Export writes the file out for an external tool.",
-  "templates.intro": "A template names the fields of a structure by offset, size and kind, so you can read it out of the evidence without writing code. Templates are kept in the case, under the name of whoever saved them, and everyone who opens the case sees them. Integers are little-endian."
+  "templates.intro": "A template names the fields of a structure by offset, size and kind, so you can read it out of the evidence without writing code. Templates are kept in the case, under the name of whoever saved them, and everyone who opens the case sees them. Integers are little-endian.",
+  "raid.intro": "A RAID set is put together from its members' images, in the order they were in the array. Nothing is written to them. The definition is kept in the case, and the set is assembled again from it whenever the case is opened, so the members must stay where they are. What Strata reports about mirrors and parity is what the members hold, not a verdict on the set."
 }

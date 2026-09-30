@@ -13,6 +13,22 @@ records, not how the code changed.
 
 ### Added
 
+- **RAID 0, 1 and 5 sets can be assembled from their member images.** Open
+  or Add evidence has an "Assemble RAID set…" button: choose the level, chunk
+  size and (for RAID 5) layout, then the members in the order they were in the
+  set, each with the offset where its data starts. **Check** assembles the set
+  and says what it found at the start of it, so a wrong chunk size, order or
+  layout shows up before anything is added. The set becomes one exhibit, and
+  the case stores its definition and the files it is made of, so the set is
+  put together again when the case is reopened (and a member that has moved is
+  named). A RAID 5 set missing one member is read by rebuilding the missing
+  chunks from the others, and the exhibit says so. **Verify** also compares
+  what the members hold: a mirror's members should be identical and a RAID 5
+  row should XOR to zero, and where they do not, the ranges are listed as what
+  was observed, without saying which member is right or that the set is wrong.
+  Tested on synthetic sets only; the members can be raw images or any other
+  image format Strata reads.
+
 - **BitLocker volumes encrypted with the Elephant diffuser.** Vista and
   Windows 7 volumes using AES-CBC with the Elephant diffuser (encryption
   methods 0x8000/0x8001) are now decrypted, not just identified. Previously
