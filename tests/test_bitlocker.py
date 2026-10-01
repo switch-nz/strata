@@ -210,3 +210,41 @@ class ElephantDiffuser(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KeptKey(unittest.TestCase):
+    """A volume unlocked once comes back unlocked from the key the case kept."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.image, _ = build.build_bitlocker_volume(include_clear=False)
+
+    def vault(self):
+        return bitlocker.BitLocker(MemImage(self.image), size=len(self.image))
+
+    def test_restored_key_unlocks_a_fresh_vault_without_a_secret(self):
+        first = self.vault()
+        self.assertTrue(first.unlock(build.PASSWORD, kind="password")["unlocked"])
+        again = self.vault()
+        self.assertFalse(again.unlocked)
+        self.assertTrue(again.restore_key(first.export_key()))
+        self.assertTrue(again.unlocked)
+        self.assertEqual(again.read(0, 512), first.read(0, 512))
+
+    def test_a_wrong_key_is_refused_and_leaves_the_vault_locked(self):
+        v = self.vault()
+        self.assertFalse(v.restore_key(b"\x01" * 32))
+        self.assertFalse(v.unlocked)
+
+    def test_the_case_keeps_and_forgets_the_key(self):
+        import shutil
+        import tempfile
+        from engine.casedb import Case
+        d = tempfile.mkdtemp(prefix="strata-key-test-")
+        self.addCleanup(lambda: shutil.rmtree(d, ignore_errors=True))
+        c = Case(os.path.join(d, "case"), name="t", examiner="A")
+        self.addCleanup(c.close)
+        c.save_volume_key(1, 2048, "bitlocker", b"k" * 32)
+        self.assertEqual(c.volume_key(1, 2048), ("bitlocker", b"k" * 32))
+        c.forget_volume_key(1, 2048)
+        self.assertIsNone(c.volume_key(1, 2048))

@@ -231,6 +231,38 @@ class Luks:
         except Exception:
             return None
 
+    def export_key(self):
+        return self.master_key
+
+    def restore_key(self, key):
+        """Unlock from a key kept by an earlier unlock. A v1 key is checked
+        against the header's digest; v2 keys are checked against the digest
+        in the header's digest area."""
+        if not self.valid or not key:
+            return False
+        key = bytes(key)
+        try:
+            if self.version == 1:
+                ok = hashlib.pbkdf2_hmac(
+                    self.hash_spec, key, self.mk_salt, self.mk_iter,
+                    len(self.mk_digest)) == self.mk_digest
+            else:
+                ok = self._check_v2_key(key)
+        except Exception:
+            ok = False
+        if ok:
+            self.master_key = key
+        return ok
+
+    def _check_v2_key(self, key):
+        for slot in self.slots:
+            dig = slot.digest
+            if dig and hashlib.pbkdf2_hmac(
+                    dig["hash"], key, dig["salt"], dig["iterations"],
+                    len(dig["digest"])) == dig["digest"]:
+                return True
+        return False
+
     def unlock(self, password, progress=None):
         if not self.valid:
             return {"unlocked": False, "reason": _t("luks.usable_luks_header")}

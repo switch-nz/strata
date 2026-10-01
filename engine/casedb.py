@@ -294,6 +294,19 @@ CREATE TABLE IF NOT EXISTS type_mismatches (
     UNIQUE (evidence_id, part, node, name));
 
 CREATE INDEX IF NOT EXISTS idx_tm ON type_mismatches(evidence_id, part);
+
+-- The key a volume was unlocked with (BitLocker's FVEK, LUKS's master key),
+-- kept so reopening the case finds the volume as it was left. It is the
+-- decryption key itself, so the case file holds it: anyone who can read the
+-- case can read the volume. Dropped when the volume is locked on purpose or
+-- the evidence is removed.
+CREATE TABLE IF NOT EXISTS volume_keys (
+    evidence_id INTEGER NOT NULL,
+    part INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    key BLOB NOT NULL,
+    saved_at TEXT NOT NULL,
+    PRIMARY KEY (evidence_id, part));
 CREATE INDEX IF NOT EXISTS idx_bm_ev ON bookmarks(evidence_id, offset);
 CREATE INDEX IF NOT EXISTS idx_tag_ev ON tagged_items(evidence_id, tag);
 CREATE INDEX IF NOT EXISTS idx_hits ON search_hits(search_id);
@@ -1065,7 +1078,30 @@ class Case:
 
     EVIDENCE_TABLES = ("bookmarks", "tagged_items", "saved_searches",
                        "file_hashes", "artefacts", "attack_tags",
-                       "type_mismatches")
+                       "type_mismatches", "volume_keys")
+
+    @_writes
+    def save_volume_key(self, evidence_id, part, kind, key):
+        self.db.execute(
+            "INSERT OR REPLACE INTO volume_keys VALUES (?,?,?,?,?)",
+            (evidence_id, part, kind, bytes(key), utcnow()))
+        self.db.commit()
+
+    def volume_key(self, evidence_id, part):
+        try:
+            row = self.db.execute(
+                "SELECT kind, key FROM volume_keys "
+                "WHERE evidence_id=? AND part=?", (evidence_id, part)).fetchone()
+        except sqlite3.Error:
+            return None
+        return (row["kind"], bytes(row["key"])) if row else None
+
+    @_writes
+    def forget_volume_key(self, evidence_id, part):
+        self.db.execute(
+            "DELETE FROM volume_keys WHERE evidence_id=? AND part=?",
+            (evidence_id, part))
+        self.db.commit()
 
     def evidence_holdings(self, evidence_id):
         out = {}
