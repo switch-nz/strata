@@ -66,6 +66,22 @@ records, not how the code changed.
   and the QCOW2 variants Strata cannot read (external data file, subcluster
   tables, zstd compression). Tested on synthetic images only; DMG and AFF4
   are still refused.
+- **Compressed files on HFS+ and APFS volumes are read.** Files that macOS
+  compresses transparently (the `com.apple.decmpfs` attribute, with the data
+  in the attribute or in the resource fork) showed as empty. Those compressed
+  with zlib or LZVN now show their real size and content, so they can be
+  viewed, hashed and searched; a block that cannot be decompressed reads as
+  zeros and the file's details say so. Files compressed with LZFSE are listed
+  with a note and a volume finding, and their content is not shown. Tested on
+  synthetic volumes only.
+- **HFS+ hard links show the file they stand for.** A hard link showed as an
+  empty file. It now has the size, content, resource fork and attributes of
+  the shared file, keeps its own name and times of creation, and says how many
+  names share it. A link whose shared file is missing is reported as
+  such. Directory hard links (as Time Machine makes) are listed with the
+  folder they stand for, and are not opened as folders, so a link cannot make
+  the tree loop. Tested on synthetic volumes; the layout was checked against
+  an independent reader.
 - **The NTFS log (`$LogFile`) can be read.** A new artefact, "NTFS log",
   shows the log's restart areas (whether the last shutdown was clean, log
   version, size) and its log records: LSN, transaction, the redo and undo
@@ -80,6 +96,11 @@ records, not how the code changed.
 
 ### Fixed
 
+- **HFS+ extended attributes were read from the wrong place in the record,
+  so their sizes and values were wrong.** The value of an inline attribute
+  starts sixteen bytes into its record, not twelve; `com.apple.quarantine`
+  and similar attributes now show their real contents. Resource forks that
+  continue in the extents overflow tree are also read in full.
 - **Sweeping event logs across a volume could use large amounts of memory
   and could not be cancelled promptly.** Every log was read whole and every
   event kept before the newest were picked. Logs are now read a chunk at a

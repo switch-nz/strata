@@ -20,7 +20,7 @@ def attr_key(file_id, name, start_block=0):
 
 
 def inline_record(value):
-    return struct.pack(">III", ATTR_INLINE_DATA, 0, len(value)) + value
+    return struct.pack(">IIII", ATTR_INLINE_DATA, 0, 0, len(value)) + value
 
 
 def build_node(key_off, key, data_off, record, total_len=None):
@@ -70,7 +70,7 @@ class AttrRecord(unittest.TestCase):
         data_off = key_off + 2 + (len(key) - 2)
         data_off += data_off & 1
         full_value = b"the rest of this never arrives"
-        record = struct.pack(">III", ATTR_INLINE_DATA, 0, len(full_value)) \
+        record = struct.pack(">IIII", ATTR_INLINE_DATA, 0, 0, len(full_value)) \
             + full_value[:5]
         node = build_node(key_off, key, data_off, record)
 

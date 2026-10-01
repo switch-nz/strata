@@ -1,6 +1,8 @@
 from .streams import UnsupportedStream
 from .ranges import read_runs
+from .. import decmpfs
 from .. import xattr as xattr_mod
+from ..text import t as _t
 import datetime
 import struct
 
@@ -24,6 +26,9 @@ SNAP_META_DATALESS = 0x1
 SNAP_META_MERGE_IN_PROGRESS = 0x2
 
 ROOT_DIR_OID = 2
+UF_COMPRESSED = 0x20
+DECMPFS_XATTR = "com.apple.decmpfs"
+RESOURCE_FORK_XATTR = "com.apple.ResourceFork"
 
 def fletcher64(data):
     body = data[8:]
@@ -482,6 +487,11 @@ class ApfsVolume:
                 if len(data) == xdata_len:
                     out["size"] = xdata_len
                     out["value"] = data
+            elif flags & ApfsVolume.XATTR_DATA_STREAM and len(val) >= 20:
+                # xattr_dstream: the object the value's extents are filed
+                # under, then that stream's size.
+                out["stream_id"], out["size"] = struct.unpack_from(
+                    "<QQ", val, 4)
         return out
 
     def _size_of(self, oid, recs):
@@ -491,9 +501,62 @@ class ApfsVolume:
         ext = recs["extent"].get(oid) or []
         return sum(e["length"] for e in ext)
 
+    def _compression(self, oid, ino, recs, entry):
+        """Note on `entry` that the file is transparently compressed
+        (UF_COMPRESSED and a com.apple.decmpfs attribute), and take its
+        size from the header when Strata can decompress it."""
+        header = None
+        for x in recs["xattr"].get(oid, ()):
+            if x["name"] == DECMPFS_XATTR:
+                header = decmpfs.parse_header(x.get("value"))
+        if header is None:
+            entry["compression_damaged"] = True
+            return
+        entry["compression"] = decmpfs.describe(header)
+        entry["uncompressed_size"] = header["size"]
+        if header["supported"]:
+            entry["_decmpfs"] = header
+            entry["size"] = header["size"]
+        else:
+            entry["compression_unsupported"] = True
+
+    def _resource_fork(self, oid, recs):
+        """(read(off, n), size) over the file's com.apple.ResourceFork
+        attribute, or (None, 0) when it has none."""
+        for x in recs["xattr"].get(oid, ()):
+            if x["name"] != RESOURCE_FORK_XATTR:
+                continue
+            if "value" in x:
+                data = x["value"]
+                return (lambda off, n: data[off:off + n]), len(data)
+            if "stream_id" in x:
+                stream, size = x["stream_id"], x["size"]
+                runs = self.runs(stream, size)
+                return (lambda off, n: read_runs(
+                    self.source, runs, off, min(n, max(0, size - off)))), size
+        return None, 0
+
+    def _decompressed(self, entry):
+        """The decmpfs reader for a compressed file (None for any other);
+        raises DecmpfsError if its compressed data cannot be laid out."""
+        header = entry.get("_decmpfs")
+        if header is None:
+            return None
+        key = entry.get("oid")
+        cache = self.__dict__.setdefault("_compressed", {})
+        got = cache.get(key)
+        if got is None:
+            reader, size = self._resource_fork(key, self._catalog())
+            got = decmpfs.Compressed(header, reader, size)
+            if len(cache) >= 8:
+                cache.clear()
+            cache[key] = got
+        return got
+
     def listdir(self, oid=ROOT_DIR_OID, path="/"):
         recs = self._catalog()
         out = []
+        lost = unsupported = 0
         for d in recs["drec"].get(oid or ROOT_DIR_OID, []):
             ino = recs["inode"].get(d["file_id"], {})
             is_dir = ino.get("is_dir", d["kind"] == 4)
@@ -511,13 +574,25 @@ class ApfsVolume:
                             for x in recs["xattr"].get(d["file_id"], [])],
                 "id": "apfs:%d" % d["file_id"],
             })
+        for e in out:
+            if not e["is_dir"] and not self.encrypted \
+                    and recs["inode"].get(e["oid"], {}).get("bsd_flags", 0) \
+                    & UF_COMPRESSED:
+                self._compression(e["oid"], recs["inode"][e["oid"]], recs, e)
+                lost += bool(e.get("compression_damaged"))
+                unsupported += bool(e.get("compression_unsupported"))
+        if unsupported and _t("apfs.compression_unsupported") not in self.findings:
+            self.findings.append(_t("apfs.compression_unsupported"))
+        if lost and _t("apfs.compression_damaged") not in self.findings:
+            self.findings.append(_t("apfs.compression_damaged"))
         out.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
         return out
 
-    def runs(self, oid):
+    def runs(self, oid, size=None):
         recs = self._catalog()
         ext = sorted(recs["extent"].get(oid, []), key=lambda e: e["logical"])
-        size = self._size_of(oid, recs)
+        if size is None:
+            size = self._size_of(oid, recs)
         out = []
         remaining = size
         for e in ext:
@@ -536,6 +611,10 @@ class ApfsVolume:
     def read_file(self, entry, max_bytes=None, stream=""):
         if stream:
             raise UnsupportedStream("APFS", stream)
+        if "_decmpfs" in entry:
+            comp = self._decompressed(entry)
+            return comp.read_at(0, comp.size if max_bytes is None
+                                else min(comp.size, max_bytes))
         oid = entry.get("oid")
         if oid is None:
             return b""
@@ -555,6 +634,8 @@ class ApfsVolume:
     def read_range(self, entry, off, length, stream=""):
         if stream:
             raise UnsupportedStream("APFS", stream)
+        if "_decmpfs" in entry:
+            return self._decompressed(entry).read_at(off, length)
         oid = entry.get("oid")
         if oid is None:
             return b""
@@ -600,7 +681,28 @@ class ApfsVolume:
             info["note"] = ("No data stream field on this inode, so the size "
                             "shown is the total of its extents and is rounded "
                             "up to the block size.")
+        if entry.get("compression"):
+            info["compression"] = {
+                "codec": entry["compression"],
+                "uncompressed_size": entry["uncompressed_size"]}
+            info["note"] = self._compression_note(entry, info)
+        elif entry.get("compression_damaged"):
+            info["note"] = _t("apfs.compressed_no_header")
         return info
+
+    def _compression_note(self, entry, info):
+        if entry.get("compression_unsupported"):
+            return _t("apfs.compressed_unread") % entry["compression"]
+        try:
+            comp = self._decompressed(entry)
+            comp.read_at(0, 1)
+        except decmpfs.DecmpfsError as exc:
+            return _t("apfs.compressed_failed") % (entry["compression"], exc)
+        text = _t("apfs.compressed") % entry["compression"]
+        if comp.findings:
+            info["compression"]["findings"] = list(comp.findings)
+            text += " " + " ".join(comp.findings)
+        return text
 
     def info(self):
         return {
