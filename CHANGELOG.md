@@ -11,6 +11,19 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-01
+
+Adds RAID 0, 1 and 5 assembly, QCOW2 and VirtualBox VDI disk images,
+BitLocker volumes with the Elephant diffuser, compressed files and hard links
+on HFS+ and APFS, a reader for the NTFS log (`$LogFile`), a template editor
+for on-disk structures, configurable folder columns, and a long list of fixes
+to differencing VHDs, event logs and case notes. Most of the new readers have
+been tested on synthetic images only; each entry says so. Upgrade from 0.7.0.
+A previously cached filesystem tree is rebuilt the next time it is opened
+(HFS+ and APFS listings now carry the size of compressed files and the
+contents of hard links); a case that predates RAID sets gains a column the
+first time it is opened. Nothing else in an existing case needs redoing.
+
 ### Added
 
 - **RAID 0, 1 and 5 sets can be assembled from their member images.** Open
@@ -1191,7 +1204,8 @@ Corroborate results in these areas with another tool before relying on them.
   ([#15](https://github.com/switch-nz/strata/issues/15),
   [#19](https://github.com/switch-nz/strata/issues/19)).
 
-[Unreleased]: https://github.com/switch-nz/strata/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/switch-nz/strata/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/switch-nz/strata/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/switch-nz/strata/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/switch-nz/strata/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/switch-nz/strata/compare/v0.5.1...v0.6.0
