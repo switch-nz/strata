@@ -10,6 +10,8 @@ SIG_HFSPLUS = b"H+"
 SIG_HFSX = b"HX"
 VOLUME_HEADER_OFFSET = 1024
 CNID_ROOT_FOLDER = 2
+CNID_CATALOG_FILE = 4
+CNID_ATTRIBUTES_FILE = 8
 
 REC_FOLDER = 0x0001
 REC_FILE = 0x0002
@@ -163,11 +165,17 @@ class HfsPlus:
             self.findings.append(
                 "HFSX volume — filename comparison may be case-sensitive.")
 
-        self.catalog = BTree(self, self.catalog_fork, "catalog")
         try:
             self.extents = BTree(self, self.extents_fork, "extents overflow")
         except ValueError:
             self.extents = None
+        # The volume header holds only a system file's first eight extents; a
+        # catalog or attributes file in more pieces than that continues in the
+        # extents overflow tree. Without the rest, nodes beyond the first
+        # pieces read as nothing and a listing comes up empty.
+        self._complete_fork(self.catalog_fork, CNID_CATALOG_FILE)
+        self._complete_fork(self.attributes_fork, CNID_ATTRIBUTES_FILE)
+        self.catalog = BTree(self, self.catalog_fork, "catalog")
         try:
             self.attrs = BTree(self, self.attributes_fork, "attributes")
         except ValueError:
@@ -175,6 +183,13 @@ class HfsPlus:
         self._by_parent = None
         self._threads = None
         self._xattrs = None
+
+    def _complete_fork(self, fork, cnid):
+        """Add to `fork` the extents the volume header could not hold."""
+        if fork.total_blocks > sum(c for _s, c in fork.extents):
+            fork.extents = self._all_extents({
+                "cnid": cnid, "_data_extents": fork.extents,
+                "_data_blocks": fork.total_blocks})
 
     def _index(self):
         if self._by_parent is not None:

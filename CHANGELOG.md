@@ -36,6 +36,15 @@ records, not how the code changed.
   shown with an ellipsis and the rest was unreachable. Hovering over a row now
   shows its full text.
 
+- **A large HFS+ volume could list as empty.** The volume header holds only
+  the first eight pieces of the catalog (the file that lists every folder and
+  file) and of the attributes file; on a volume where either is in more
+  pieces, the rest are recorded in the extents overflow file, which was not
+  consulted. A folder whose entries lay in a later piece showed "Empty
+  directory", the volume name and extended attributes could be missing, and
+  nothing said so. Both files are now read in full. Checked against a
+  synthetic volume built to the published layout and read by an independent
+  reader (libfshfs); not yet against a large volume written by macOS.
 - **Pressing Enter in a dialog cancelled it instead of submitting it.** In
   the BitLocker and LUKS unlock dialog, the examiner-name dialogs, New case,
   Open case, tagging, and every other dialog with a Cancel button, Enter in a
