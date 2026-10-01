@@ -105,8 +105,10 @@ def _pad2(n):
     return n + (n & 1)
 
 
-def btree(records, node_size, max_key_len, attributes):
-    """A B-tree file. `records` is [(sort key, key bytes, data bytes)]."""
+def btree(records, node_size, max_key_len, attributes, reverse_leaves=False):
+    """A B-tree file. `records` is [(sort key, key bytes, data bytes)]. With
+    `reverse_leaves` the leaves are numbered from the highest node down, so the
+    first leaf is the last node in the file, as it can be in a real tree."""
     records = sorted(records, key=lambda r: r[0])
     cap = node_size - 14
 
@@ -150,10 +152,15 @@ def btree(records, node_size, max_key_len, attributes):
     first_keys = []
     i = 0
     for g, group in enumerate(leaf_groups):
-        num = 1 + g
-        nodes[num] = pack(KIND_LEAF, 1, group,
-                          num + 1 if g + 1 < n_leaves else 0,
-                          num - 1 if g else 0)
+        if reverse_leaves:
+            num = n_leaves - g
+            flink = num - 1 if g + 1 < n_leaves else 0
+            blink = num + 1 if g else 0
+        else:
+            num = 1 + g
+            flink = num + 1 if g + 1 < n_leaves else 0
+            blink = num - 1 if g else 0
+        nodes[num] = pack(KIND_LEAF, 1, group, flink, blink)
         first_keys.append((records[i][1] if records else b"", num))
         i += len(group)
     depth, level = 1, first_keys
@@ -179,8 +186,10 @@ def btree(records, node_size, max_key_len, attributes):
     header[8] = KIND_HEADER
     struct.pack_into(">H", header, 10, 3)
     struct.pack_into(">HIIIIHHII", header, 14, depth, root if records else 0,
-                     len(records), 1 if records else 0,
-                     n_leaves if records else 0, node_size, max_key_len,
+                     len(records),
+                     (n_leaves if reverse_leaves else 1) if records else 0,
+                     (1 if reverse_leaves else n_leaves) if records else 0,
+                     node_size, max_key_len,
                      total, 0)
     header[14 + 39] = 0xCF                      # key compare: case folding
     struct.pack_into(">I", header, 14 + 40, attributes)
@@ -209,12 +218,19 @@ def _fork(size, start, blocks):
     return struct.pack(">QII", size, 0, blocks) + ext.ljust(64, b"\x00")
 
 
+def _fork_extents(size, extents, blocks):
+    """A fork with up to eight extents (start, count) held inline."""
+    ext = b"".join(struct.pack(">II", a, n) for a, n in extents[:8])
+    return struct.pack(">QII", size, 0, blocks) + ext.ljust(64, b"\x00")
+
+
 def _perms(flags, special):
     return struct.pack(">IIBBHI", 501, 20, 0, flags, 0o100644, special)
 
 
 def build(entries, block_size=4096, node_size=4096, name="TESTVOL",
-          private_files=(), private_dirs=(), unmounted=True):
+          private_files=(), private_dirs=(), unmounted=True, fragment=(),
+          reverse_leaves=False):
     """The volume image (bytes). `entries` are the root folder's children;
     `private_files` are File objects whose catalog ID is their inode number
     (kept in the private data folder, with their link counts set from the
@@ -341,10 +357,24 @@ def build(entries, block_size=4096, node_size=4096, name="TESTVOL",
         cat.append((cat_sort(parent, f.name), cat_key(parent, f.name), data))
         cat.append((cat_sort(f.cnid, ""), cat_key(f.cnid, ""),
                     struct.pack(">HHI", 4, 0, parent) + uname(f.name)))
-    cat_tree = btree(cat, node_size, 516, 0x6)
+    cat_tree = btree(cat, node_size, 516, 0x6, reverse_leaves=reverse_leaves)
     attr_tree = btree(attrs, node_size, 266, 0x6) if attrs else None
-    cat_ext = take(len(cat_tree))
-    attr_ext = take(len(attr_tree)) if attr_tree else (0, 0)
+
+    def place(tree, scatter):
+        """[(start block, count)] for a system file of `tree`'s size."""
+        if not tree:
+            return []
+        if not scatter:
+            start, count = take(len(tree))
+            return [(start, count)]
+        out = []
+        for _ in range(blocks_for(len(tree))):
+            out.append((take(block_size)[0], 1))
+            take(block_size)              # a gap, so no two are adjacent
+        return out
+
+    cat_ext = place(cat_tree, "catalog" in fragment)
+    attr_ext = place(attr_tree, "attributes" in fragment)
     take(1024)                  # room for the alternate volume header
     total_blocks = cursor[0]
 
@@ -355,10 +385,34 @@ def build(entries, block_size=4096, node_size=4096, name="TESTVOL",
         bitmap[n >> 3] |= 0x80 >> (n & 7)
     img[alloc[0] * block_size:alloc[0] * block_size + len(bitmap)] = bitmap
     img[ext[0] * block_size:ext[0] * block_size + len(extents_tree)] = extents_tree
-    img[cat_ext[0] * block_size:cat_ext[0] * block_size + len(cat_tree)] = cat_tree
+    def write(tree, extents):
+        at = 0
+        for start, count in extents:
+            piece = tree[at:at + count * block_size]
+            img[start * block_size:start * block_size + len(piece)] = piece
+            at += count * block_size
+
+    write(cat_tree, cat_ext)
     if attr_tree:
-        at = attr_ext[0] * block_size
-        img[at:at + len(attr_tree)] = attr_tree
+        write(attr_tree, attr_ext)
+
+    # Extents beyond the eighth go in the extents overflow tree, keyed by the
+    # system file's catalog ID (catalog 4, attributes 8) and the file block
+    # each run starts at.
+    overflow = []
+    for cnid, extents in ((4, cat_ext), (8, attr_ext)):
+        done = sum(n for _a, n in extents[:8])
+        for i in range(8, len(extents), 8):
+            group = extents[i:i + 8]
+            key = struct.pack(">HBBII", 10, 0, 0, cnid, done)
+            rec = b"".join(struct.pack(">II", a, n) for a, n in group)
+            overflow.append(((cnid, 0, done), key, rec.ljust(64, b"\x00")))
+            done += sum(n for _a, n in group)
+    if overflow:
+        extents_tree = btree(overflow, node_size, 10, 0)
+        assert len(extents_tree) <= ext[1] * block_size
+        img[ext[0] * block_size:ext[0] * block_size
+            + len(extents_tree)] = extents_tree
     for f in files:
         d, r = plan[id(f)]
         if f.data:
@@ -376,8 +430,11 @@ def build(entries, block_size=4096, node_size=4096, name="TESTVOL",
     struct.pack_into(">I", vh, 64, max(taken) + 1)
     vh[112:192] = _fork(alloc[1] * block_size, *alloc)
     vh[192:272] = _fork(len(extents_tree), *ext)
-    vh[272:352] = _fork(len(cat_tree), *cat_ext)
-    vh[352:432] = _fork(len(attr_tree) if attr_tree else 0, *attr_ext)
+    vh[272:352] = _fork_extents(
+        len(cat_tree), cat_ext, sum(n for _a, n in cat_ext))
+    vh[352:432] = _fork_extents(
+        len(attr_tree) if attr_tree else 0, attr_ext,
+        sum(n for _a, n in attr_ext))
     img[1024:1536] = vh
     img[len(img) - 1024:len(img) - 512] = vh
     return bytes(img)

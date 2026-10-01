@@ -31,6 +31,15 @@ records, not how the code changed.
 
 ### Fixed
 
+- **A large HFS+ volume could list as empty.** The volume header holds only
+  the first eight pieces of the catalog (the file that lists every folder and
+  file) and of the attributes file; on a volume where either is in more
+  pieces, the rest are recorded in the extents overflow file, which was not
+  consulted. A folder whose entries lay in a later piece showed "Empty
+  directory", the volume name and extended attributes could be missing, and
+  nothing said so. Both files are now read in full. Checked against a
+  synthetic volume built to the published layout and read by an independent
+  reader (libfshfs); not yet against a large volume written by macOS.
 - **An HFS+ volume's name was never shown.** The volume tree titled an HFS+
   partition only "Partition N", where NTFS, exFAT, FAT and ext volumes show
   their label. The name is now read from the catalog's root folder record
