@@ -4936,7 +4936,7 @@ IMAGE_EXTS = (
     ".dd", ".raw", ".img", ".001", ".bin",
     ".vhdx", ".avhdx",
     ".vmdk",
-    ".vhd", ".vdi", ".qcow", ".qcow2", ".ad1", ".aff",
+    ".vhd", ".vdi", ".qcow", ".qcow2", ".dmg", ".ad1", ".aff",
 )
 CASE_EXTS = (".strata",)
 

@@ -448,5 +448,20 @@
   "lzfse.header_damaged": "An LZFSE block header is damaged or inconsistent.",
   "lzfse.stream_damaged": "The LZFSE data is damaged: a decoded value is outside what its block allows.",
   "lzfse.too_large": "The LZFSE data would decode to more than it declares or than is allowed.",
-  "lzfse.bad_magic": "The LZFSE data has a block marker that is not one of the known ones."
+  "lzfse.bad_magic": "The LZFSE data has a block marker that is not one of the known ones.",
+  "ewf.apple_dmg": "Apple disk image (DMG): %s",
+  "dmg.not_a_dmg": "The file does not end with an Apple disk image trailer.",
+  "dmg.encrypted": "The image is encrypted",
+  "dmg.segmented": "The image is split into %d segments",
+  "dmg.plist_unreadable": "The image's property list is missing or cannot be read",
+  "dmg.table_damaged": "A block table in the image is damaged",
+  "dmg.chunk_type_unsupported": "The image uses chunk types Strata does not read (%s)",
+  "dmg.chunks_overlap": "Chunks in the image's block tables overlap",
+  "dmg.chunk_too_large": "A compressed chunk would decompress to %d bytes, more than Strata reads",
+  "dmg.chunk_outside_file": "A chunk lies outside the image file or is shorter than the sectors it covers",
+  "dmg.tables_longer": "The block tables describe %d bytes, more than the %d bytes the trailer declares; the rest is not shown.",
+  "dmg.tables_shorter": "The block tables cover %d of the %d bytes the trailer declares; the rest reads as zeros.",
+  "dmg.chunk_failed": "The chunk at byte %d would not decompress (%s); it reads as zeros.",
+  "dmg.chunk_short": "The chunk at byte %d decompressed to %d bytes, not the %d it covers; the rest reads as zeros.",
+  "dmg.dmg_stores_acquisition_hash": "A DMG stores no acquisition hash Strata can compare; the hashes are of the disk as read."
 }
