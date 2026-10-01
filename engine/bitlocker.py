@@ -359,6 +359,25 @@ class BitLocker:
     def unlocked(self):
         return self.fvek is not None
 
+    def export_key(self):
+        return self.fvek
+
+    def restore_key(self, key):
+        """Unlock from a key kept by an earlier unlock. The decrypted header
+        must still show a filesystem, or the key is dropped again."""
+        if not self.valid or self.mode is None or not key:
+            return False
+        self.fvek = bytes(key)
+        self._kc = None
+        try:
+            ok = self.verify().get("ok", False)
+        except Exception:
+            ok = False
+        if not ok:
+            self.fvek = None
+            self._kc = None
+        return ok
+
     def unlock(self, secret, kind=None, progress=None, bek_key=None):
         if not self.valid:
             return {"unlocked": False, "reason": _t("bitlocker.usable_bitlocker_metadata")}

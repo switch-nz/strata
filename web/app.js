@@ -2387,8 +2387,25 @@ function sniffZip(b) {
       return { ext: 'ooxml', kind: 'office', label };
     }
   }
+  // Word, Excel and PowerPoint write [Content_Types].xml first, so the first
+  // entry says nothing. The entries after it are named in their own local
+  // headers, which the bytes in hand usually reach.
+  const seen = new TextDecoder('latin1').decode(b);
+  for (const [re, label] of OOXML_PARTS) {
+    if (re.test(seen)) return { ext: 'ooxml', kind: 'office', label };
+  }
   return null;
 }
+
+const OOXML_PARTS = [
+  [/PK[^]{26}word\//, txt('ui.word_document_docx')],
+  [/PK[^]{26}ppt\//, txt('ui.powerpoint_presentation_pptx')],
+  [/PK[^]{26}xl\//, txt('ui.excel_workbook_xlsx')],
+];
+
+// A large first entry can push the rest past the bytes read, so the name is
+// the last word: these are the Office extensions that are zips inside.
+const OFFICE_ZIP_EXT = /\.(docx|docm|dotx|dotm|xlsx|xlsm|xltx|xltm|xlsb|pptx|pptm|ppsx|potx|odt|ods|odp|ott|ots|otp)$/i;
 
 function sniffIsoBmff(b) {
   if (b.length < 12 || String.fromCharCode(...b.slice(4, 8)) !== 'ftyp') return null;
@@ -3218,6 +3235,9 @@ async function previewEntry(e, part, from = null, stream = null) {
   }
 
   if (kind?.kind === 'office') return openDocument(e, part);
+  if (kind?.ext === 'zip' && OFFICE_ZIP_EXT.test(e.name || '')) {
+    return openDocument(e, part);
+  }
   if (kind?.ext === 'zip' || (kind?.kind === 'archive' && kind.ext === 'zip')) {
     return openArchive(e, part);
   }
@@ -5231,21 +5251,41 @@ function renderLegend() {
     + coverageLabel(S.profile);
 }
 
-async function runVerify() {
-  const t = await api.post('verify');
-  const r = await awaitTask(t, 'Verifying');
-  if (!r) return;
+// The hash badge for one exhibit, from what the case has on record: a
+// verification outlives the session that ran it.
+function showIntegrity(ev) {
   const badge = $('#integrity');
   badge.hidden = false;
-  if (r.md5_match === true) {
+  const ran = ev && ev.verified_at;
+  if (!ran) {
+    badge.dataset.state = 'unchecked';
+    badge.textContent = txt('ui.hashes_unchecked');
+  } else if (ev.stored_md5 && ev.verified_md5 === ev.stored_md5) {
     badge.dataset.state = 'verified';
     badge.textContent = txt('ui.hashes_verified');
-  } else if (r.stored_md5) {
+  } else if (ev.stored_md5) {
     badge.dataset.state = 'failed';
     badge.textContent = txt('ui.hash_mismatch');
   } else {
     badge.dataset.state = 'unchecked';
     badge.textContent = txt('ui.stored_hash');
+  }
+}
+
+async function runVerify() {
+  const t = await api.post('verify');
+  const r = await awaitTask(t, 'Verifying');
+  if (!r) return;
+  const ev = S.caseInfo?.evidence?.find(e => e.id === S.activeId);
+  if (ev) {
+    ev.verified_md5 = r.computed_md5;
+    ev.verified_sha1 = r.computed_sha1;
+    ev.verified_at = new Date().toISOString();
+    if (!ev.stored_md5 && r.stored_md5) ev.stored_md5 = r.stored_md5;
+    showIntegrity(ev);
+  } else {
+    showIntegrity({ verified_at: 'now', stored_md5: r.stored_md5,
+                    verified_md5: r.computed_md5 });
   }
   toast(r.md5_match ? txt('messages.acquisition_hashes_match_media')
     : `Recomputed MD5 ${r.computed_md5}`);
@@ -9196,6 +9236,7 @@ async function setWho(name) {
   const r = await api.post('whoami', { name });
   if (r.error) return toast(r.error);
   await loadWho();
+  if ($('.view[data-view="cases"]')?.classList.contains('is-on')) renderCases();
   toast(txt('messages.toast.work_now_recorded_name', { name: name }));
 }
 
@@ -9679,9 +9720,7 @@ function applyOpened(r, { tree = true } = {}) {
   $('#btn-case').addEventListener('click', () => caseDialog());
   $('#btn-audit').hidden = false;
   $('#btn-report').hidden = S.readOnly;
-  $('#integrity').hidden = false;
-  $('#integrity').dataset.state = 'unchecked';
-  $('#integrity').textContent = txt('ui.hashes_unchecked');
+  showIntegrity(S.caseInfo?.evidence?.find(e => e.id === S.activeId));
   scopeOptions();
   if ($('.view[data-view="cases"]')?.classList.contains('is-on')) {
     renderCases();
