@@ -263,5 +263,87 @@ class Ciphers(unittest.TestCase):
                                           pst.CRYPT_CYCLIC, big), data)
 
 
+class Ost4kPages(unittest.TestCase):
+    """The 64-bit Unicode format with 4k (4096-byte) pages that Outlook
+    2013+ writes for OST files -- not documented by [MS-PST] at all, so
+    tested here against a fixture built independently from
+    libyal/libpff's reverse-engineered documentation, not from engine.pst
+    (see imagebuild_pst.Layout4K)."""
+
+    def test_version_36_is_read_as_unicode_4k_pages(self):
+        raw = build.build_4k_store().raw
+        p = pst.Pst(raw)
+        self.assertTrue(p.valid)
+        self.assertEqual(p.page_size, 4096)
+        info = p.info()
+        self.assertEqual(info["format"], "Unicode (64-bit, 4k pages)")
+        self.assertTrue(any("4k" in f for f in info["findings"]))
+
+    def test_version_37_wip_is_also_read_as_4k_pages(self):
+        p = pst.Pst(build.build_4k_store(version=37).raw)
+        self.assertTrue(p.valid)
+        self.assertEqual(p.page_size, 4096)
+
+    def test_a_far_future_unknown_version_is_still_refused(self):
+        # VER_UNICODE_4K accepts exactly {36, 37} -- not "36 or higher" --
+        # so an unrelated large version number isn't guessed at.
+        p = pst.Pst(build.build_4k_store(version=99).raw)
+        self.assertFalse(p.valid)
+
+    def test_message_and_uncompressed_attachment_are_read(self):
+        s = build.build_4k_store()
+        p = pst.open_pst(s.raw)
+        self.assertIsNotNone(p)
+        msg = p.message(s.message_nid)
+        self.assertEqual(msg["subject"], build.MESSAGE_SUBJECT)
+        atts = p.attachments(s.node)
+        self.assertEqual(len(atts), 1)
+        self.assertEqual(atts[0]["nid"], s.attachment_nids[0])
+        content = p.attachment_bytes(s.node, s.attachment_nids[0])
+        self.assertEqual(content, build.ATTACHMENT_BYTES)
+
+    def test_compressed_attachment_block_is_decompressed(self):
+        s = build.build_4k_store(compress_attachment=True)
+        p = pst.open_pst(s.raw)
+        self.assertIsNotNone(p)
+        content = p.attachment_bytes(s.node, s.attachment_nids[0])
+        self.assertEqual(content, build.ATTACHMENT_BYTES)
+
+    def test_compressed_and_uncompressed_attachments_differ_on_disk(self):
+        # a meaningful check that the compressed fixture actually exercises
+        # decompression, not a fixture that happens to store identical bytes
+        plain = build.build_4k_store(compress_attachment=False).raw
+        comp = build.build_4k_store(compress_attachment=True).raw
+        self.assertNotEqual(plain, comp)
+
+    def test_large_compressible_content_round_trips(self):
+        big = (b"Quarterly invoice detail. " * 2000)
+        s = build.build_4k_store(compress_attachment=True, attachment=big)
+        p = pst.open_pst(s.raw)
+        content = p.attachment_bytes(s.node, s.attachment_nids[0])
+        self.assertEqual(content, big)
+
+    def test_encrypted_4k_store_still_round_trips(self):
+        s = build.build_4k_store(crypt=build.CRYPT_CYCLIC)
+        p = pst.open_pst(s.raw)
+        self.assertIsNotNone(p)
+        self.assertEqual(p.attachment_bytes(s.node, s.attachment_nids[0]),
+                         build.ATTACHMENT_BYTES)
+
+    def test_a_corrupted_compressed_block_is_reported_not_raised(self):
+        s = build.build_4k_store(compress_attachment=True)
+        raw = bytearray(s.raw)
+        # The attachment's property-context block is the first one added,
+        # so it sits right after the header (build.HEADER_SIZE); corrupt a
+        # byte well inside the compressed stream so decompression fails
+        # cleanly rather than by chance still succeeding.
+        raw[build.HEADER_SIZE + 10] ^= 0xFF
+        p = pst.open_pst(bytes(raw))
+        self.assertIsNotNone(p)
+        content = p.attachment_bytes(s.node, s.attachment_nids[0])
+        self.assertNotEqual(content, build.ATTACHMENT_BYTES)
+        self.assertTrue(any("claims to expand" in f for f in p.findings))
+
+
 if __name__ == "__main__":
     unittest.main()

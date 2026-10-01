@@ -128,7 +128,10 @@ recognised and refused by name today; these entries are about *reading* it.
       open, and neither has been checked against logs from real machines.
 - [~] **PST:** ANSI (32-bit) files are read, from the layouts in [MS-PST]
       and synthetic files built from them; no real ANSI file has been
-      checked yet. OST-specific structures are not handled.
+      checked yet. OST's 64-bit 4k-page format and block compression
+      (Outlook 2013+) are also read, but [MS-PST] doesn't document either
+      at all -- this is built against libyal/libpff's reverse-engineered
+      documentation instead, and no real OST file has been checked yet.
 - [~] **Legacy Office body text** — Word's piece table, Excel's BIFF stream
       and PowerPoint's records are decoded, and whatever cannot be proven from
       the file is a finding rather than a guess. Checked against nearly 400

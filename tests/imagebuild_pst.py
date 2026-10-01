@@ -25,6 +25,7 @@ data is a single block, or an XBLOCK / XXBLOCK data tree.
 """
 
 import struct
+import zlib
 from collections import namedtuple
 
 from engine import pst as _pst          # cipher tables only, see _encode()
@@ -33,6 +34,13 @@ MAGIC = b"!BDN"
 MAGIC_CLIENT = b"SM"
 VER_ANSI = 14
 VER_UNICODE = 23
+# The 64-bit Unicode format with 4k (4096-byte) pages, which Outlook 2013+
+# writes for OST files. Not documented by [MS-PST] at all; this layout is
+# written from libyal/libpff's reverse-engineered "Personal Folder File
+# (PFF) format" documentation (page/block/footer layout) and
+# libpff_data_block.c (block compression), not from engine.pst.
+VER_UNICODE_4K = 36
+PAGE_SIZE_4K = 4096
 
 CRYPT_NONE, CRYPT_PERMUTE, CRYPT_CYCLIC = 0, 1, 2
 
@@ -438,3 +446,154 @@ def build_pst(attachment_count=1):
     s = build_store(ansi=False, attachment_count=attachment_count,
                     folders=False)
     return s.raw, s.node, s.attachment_nids
+
+
+# --- the 64-bit 4k page (OST) layout -----------------------------------
+
+class Layout4K:
+    """Like Layout, but for the 64-bit Unicode format with 4k pages: 4096-
+    byte BTPAGEs with a 2-byte entry count (not 1), and blocks padded to
+    512-byte increments with a 24-byte footer (not 16) that can also
+    record a shorter, compressed size. Field layout is written from
+    libyal/libpff's documentation, independently of engine.pst."""
+
+    def __init__(self, crypt=CRYPT_NONE, first_index=1):
+        self.crypt = crypt
+        self.chunks = [bytes(HEADER_SIZE)]
+        self.length = HEADER_SIZE
+        self.bbt = []                       # (bid, ib, cb)
+        self._index = first_index
+        self._page_bid = 0x4000
+
+    def _bid(self, internal):
+        bid = (self._index << 2) | (2 if internal else 0)
+        self._index += 1
+        return bid
+
+    def _uint(self, v):
+        return struct.pack("<Q", v)
+
+    def add_block(self, data, internal=False, compress=False):
+        """Adds a 4k-page-format block and returns its BID. If compress,
+        the stored bytes are whole-stream zlib-compressed (RFC1950) and
+        the footer's uncompressed-data-size records the real length --
+        this is what tells a reader the block is compressed at all, per
+        libpff_data_block.c."""
+        bid = self._bid(internal)
+        plain = data if internal else _encode(bytes(data), self.crypt, bid)
+        stored = zlib.compress(bytes(plain)) if compress else bytes(plain)
+        trailer_len = 24
+        total = -(-(len(stored) + trailer_len) // 512) * 512
+        pad = total - trailer_len - len(stored)
+        # data_size, signature, checksum, back_pointer, unknown1,
+        # uncompressed_data_size, unknown2
+        trailer = struct.pack("<HHIQHHI", len(stored), 0, 0, bid, 2,
+                              len(plain), 0)
+        ib = self.length
+        self.chunks.append(stored + bytes(pad) + trailer)
+        self.length += total
+        self.bbt.append((bid, ib, len(stored)))
+        return bid
+
+    def add_page(self, entries, cb_ent, ptype, level=0):
+        """A 4096-byte 4k BTPAGE; returns (ib, page bid)."""
+        body = 4056
+        page = bytearray(PAGE_SIZE_4K)
+        for i, e in enumerate(entries):
+            assert len(e) <= cb_ent
+            page[i * cb_ent:i * cb_ent + len(e)] = e
+        struct.pack_into("<HHBB", page, body, len(entries),
+                         (body // cb_ent) if cb_ent else 0, cb_ent, level)
+        t = 4072
+        bid = self._page_bid
+        self._page_bid += 4
+        page[t:t + 4] = bytes((ptype, ptype, 0, 0))
+        struct.pack_into("<IQ", page, t + 4, 0, bid)
+        ib = self.length
+        self.chunks.append(bytes(page))
+        self.length += PAGE_SIZE_4K
+        return ib, bid
+
+    def btree(self, entries, key_of, ptype, levels=1):
+        cb_leaf = len(entries[0]) if entries else 24
+        if levels == 1 or len(entries) < 2:
+            ib, bid = self.add_page(entries, cb_leaf, ptype)
+            return bid, ib
+        half = len(entries) // 2
+        refs = []
+        for part in (entries[:half], entries[half:]):
+            ib, bid = self.add_page(part, cb_leaf, ptype)
+            refs.append(self._uint(key_of(part[0])) + self._uint(bid)
+                        + self._uint(ib))
+        ib, bid = self.add_page(refs, 24, ptype, level=1)
+        return bid, ib
+
+    def subnode_tree(self, entries):
+        head = struct.pack("<BBH", 0x02, 0, len(entries)) + bytes(4)
+        body = b"".join(b"".join(self._uint(v) for v in e) for e in entries)
+        return self.add_block(head + body, internal=True)
+
+    def nbt_entry(self, nid, data_bid, sub_bid, parent=0):
+        return struct.pack("<QQQII", nid, data_bid, sub_bid, parent, 0)
+
+    def bbt_entry(self, bid, ib, cb):
+        return struct.pack("<QQHHI", bid, ib, cb, 2, 0)
+
+    def finish(self, version, nbt, bbt, crypt):
+        raw = bytearray(b"".join(self.chunks))
+        struct.pack_into("<4s", raw, 0, MAGIC)
+        struct.pack_into("<2s", raw, 8, MAGIC_CLIENT)
+        struct.pack_into("<HH", raw, 10, version, 19)
+        raw[14] = raw[15] = 1               # bPlatformCreate / Access
+        struct.pack_into("<Q", raw, 184, len(raw))                 # ibFileEof
+        struct.pack_into("<4Q", raw, 216, nbt[0], nbt[1], bbt[0], bbt[1])
+        raw[248] = 2                                                # fAMapValid
+        raw[256:512] = b"\xff" * 256                                # rgbFM/FP
+        raw[512], raw[513] = 0x80, crypt
+        return bytes(raw)
+
+
+def build_4k_store(crypt=CRYPT_NONE, compress_attachment=False,
+                   attachment=ATTACHMENT_BYTES, version=VER_UNICODE_4K):
+    """A minimal 64-bit-4k-page (OST) store: one orphan message with one
+    attachment, directly reachable by nid (no folders). compress_attachment
+    stores the attachment's content block zlib-compressed, to exercise
+    4k-page block decompression."""
+    lay = Layout4K(crypt)
+    text = _Values(False).text
+    nid = (1 << 5) | NID_TYPE_ATTACHMENT
+
+    own = []                                # the attachment's own subnodes
+
+    def spill(value):
+        local = ((len(own) + 1) << 5) | NID_TYPE_LTP
+        own.append((local, lay.add_block(value, compress=compress_attachment), 0))
+        return local
+
+    pc = _property_context([
+        (PID_ATTACH_LONG_FILENAME,) + text(ATTACHMENT_NAME),
+        (PID_ATTACH_MIME_TAG,) + text(ATTACHMENT_MIME),
+        (PID_ATTACH_SIZE, PT_INT32, len(attachment)),
+        (PID_ATTACH_DATA_BIN, PT_BINARY, attachment),
+    ], spill)
+    # Compress whichever block ends up holding the bulk bytes: the PC
+    # block itself for small (inline) content, or the spilled block for
+    # content too big to fit in the heap-on-node.
+    pc_compress = compress_attachment and len(attachment) <= INLINE_MAX
+    att_data_bid = lay.add_block(pc, compress=pc_compress)
+    att_sub_bid = lay.subnode_tree(own) if own else 0
+    msg_sub = lay.subnode_tree([(nid, att_data_bid, att_sub_bid)])
+
+    props = [(PID_SUBJECT,) + text(MESSAGE_SUBJECT),
+             (PID_MESSAGE_FLAGS, PT_INT32, MSG_FLAG_HAS_ATTACH)]
+    msg_data = lay.add_block(_property_context(props, lambda v: 0))
+
+    nodes = [(MESSAGE_NID, msg_data, msg_sub, 0)]
+    bbt_entries = [lay.bbt_entry(*e) for e in lay.bbt]
+    nbt_entries = [lay.nbt_entry(*n) for n in nodes]
+    nbt = lay.btree(nbt_entries,
+                    lambda e: struct.unpack_from("<Q", e, 0)[0], PTYPE_NBT)
+    bbt = lay.btree(bbt_entries,
+                    lambda e: struct.unpack_from("<Q", e, 0)[0], PTYPE_BBT)
+    raw = lay.finish(version, nbt, bbt, crypt)
+    return Store(raw, {"data": 0, "sub": msg_sub}, [nid], MESSAGE_NID)
