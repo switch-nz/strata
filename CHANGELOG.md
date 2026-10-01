@@ -22,6 +22,24 @@ records, not how the code changed.
   HFS+ or APFS filesystem tree is rebuilt the next time it is opened, so
   these files show their size. Tested on synthetic volumes only.
 
+### Fixed
+
+- **An HFS+ volume's name was never shown.** The volume tree titled an HFS+
+  partition only "Partition N", where NTFS, exFAT, FAT and ext volumes show
+  their label. The name is now read from the catalog's root folder record
+  (cheaply, without reading the whole catalog) and shown like the others.
+- **A GPT partition's own name was not shown in the volume tree.** The name
+  the partition table gives a partition (what Disk Management and FTK Imager
+  show) was only in the details panel. The tree now shows it beside the size
+  and filesystem, apart from the filesystem's own label.
+- **The GPT's own tables were reported as unpartitioned space.** The space
+  between the protective MBR and the first usable sector (the GPT header and
+  partition array) was part of the first "Unpartitioned space" entry, and the
+  backup header and array at the end of the disk made a trailing one even on
+  a disk with no spare room. Space outside the GPT's usable range is no longer
+  listed as unpartitioned; gaps between partitions and spare room inside the
+  usable range still are.
+
 ## [0.8.0] - 2026-10-01
 
 Adds RAID 0, 1 and 5 assembly, QCOW2 and VirtualBox VDI disk images,

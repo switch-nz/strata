@@ -140,6 +140,13 @@ def _fat_label(source, offset):
         return _clean_label(boot[0x2B:0x36].decode("latin-1"))
     return None
 
+def _hfsplus_label(source, offset):
+    from .ewf import OffsetReader
+    from .fs import hfsplus
+    size = max(0, getattr(source, "size", 0) - offset)
+    return _clean_label(hfsplus.HfsPlus(
+        OffsetReader(source, offset, size)).volume_name())
+
 def volume_label(source, offset, detected):
     if not detected:
         return None
@@ -153,6 +160,8 @@ def volume_label(source, offset, detected):
             return _exfat_label(source, offset)
         if fs.startswith("FAT"):
             return _fat_label(source, offset)
+        if fs.startswith("HFS"):
+            return _hfsplus_label(source, offset)
     except Exception:
         return None
     return None
@@ -343,6 +352,8 @@ def _gpt_header(source, lba, sector_size):
         "lba": lba,
         "this_lba": struct.unpack_from("<Q", hdr, 24)[0],
         "alt_lba": struct.unpack_from("<Q", hdr, 32)[0],
+        "first_usable": struct.unpack_from("<Q", hdr, 40)[0],
+        "last_usable": struct.unpack_from("<Q", hdr, 48)[0],
         "disk_guid": _guid_le(hdr[56:72]),
         "entry_lba": struct.unpack_from("<Q", hdr, 72)[0],
         "n_entries": struct.unpack_from("<I", hdr, 80)[0],
@@ -453,6 +464,23 @@ def parse_gpt(source, sector_size=512):
                     "arrays. One was updated and the other was not, so the "
                     "layout changed after the copy that was left behind.")
     return "GPT", parts, findings
+
+def gpt_usable(source, sector_size=512):
+    """(first, last) byte offsets of the area a GPT says partitions may use
+    (its usable LBA range, end exclusive), or None. Everything outside it is
+    the table itself, front and back; it is not unpartitioned space."""
+    size = getattr(source, "size", 0)
+    primary, _notes = _gpt_header(source, 1, sector_size)
+    alt = primary["alt_lba"] if primary else (size // sector_size) - 1
+    for header in (primary, _gpt_header(source, alt, sector_size)[0]
+                   if alt > 1 else None):
+        if header and header["first_usable"] <= header["last_usable"]:
+            lo = header["first_usable"] * sector_size
+            hi = (header["last_usable"] + 1) * sector_size
+            if lo < size:
+                return lo, min(hi, size)
+    return None
+
 
 def scan(source):
     ss = getattr(source, "bytes_per_sector", 512) or 512
@@ -574,7 +602,11 @@ def scan(source):
                 "allocated": False,
             })
 
-    cursor = ss
+    cursor, end = ss, source.size
+    if scheme == "GPT":
+        usable = gpt_usable(source, ss)
+        if usable:
+            cursor, end = max(ss, usable[0]), usable[1]
     for p in regions:
         if p["offset"] > cursor + ss:
             gaps(cursor, p["offset"])
@@ -583,8 +615,8 @@ def scan(source):
         # gaps between its logical partitions are shown too.
         cursor = max(cursor, p["offset"] if p.get("container")
                      else p["offset"] + p["size"])
-    if source.size - cursor > ss:
-        gaps(cursor, source.size, trailing=True)
+    if end - cursor > ss:
+        gaps(cursor, end, trailing=True)
     return {"scheme": scheme, "partitions": out,
             "findings": gpt_findings}
 
