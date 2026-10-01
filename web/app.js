@@ -11078,6 +11078,14 @@ $('#btn-hash').addEventListener('click', doHash);
 $('#btn-duplicates').addEventListener('click', doDuplicates);
 $('#btn-diff').addEventListener('click', runDiff);
 $('#btn-similar').addEventListener('click', doSimilar);
+// Enter in a dialog's text field presses the form's first submit button. The
+// Cancel button comes first in each menu, so Enter used to cancel the dialog
+// instead of submitting it. Cancel buttons are plain buttons (type="button" in
+// the markup) that close their dialog themselves, leaving the confirm button
+// the form's default.
+$$('dialog button[value="cancel"]').forEach(b =>
+  b.addEventListener('click', () => b.closest('dialog').close('cancel')));
+
 $('#btn-artifacts').addEventListener('click', () => doArtifacts(true));
 $('#art-scope')?.addEventListener('change', () => { artPick = null; renderArtTree(); });
 
