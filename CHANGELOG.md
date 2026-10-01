@@ -31,6 +31,11 @@ records, not how the code changed.
 
 ### Fixed
 
+- **A cut-off name in the evidence tree can be read in full.** The tree is
+  narrow, so a long line such as a partition's "volume label ..." detail was
+  shown with an ellipsis and the rest was unreachable. Hovering over a row now
+  shows its full text.
+
 - **A large HFS+ volume could list as empty.** The volume header holds only
   the first eight pieces of the catalog (the file that lists every folder and
   file) and of the attributes file; on a volume where either is in more
