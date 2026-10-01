@@ -31,6 +31,11 @@ records, not how the code changed.
 
 ### Fixed
 
+- **Pressing Enter in a dialog cancelled it instead of submitting it.** In
+  the BitLocker and LUKS unlock dialog, the examiner-name dialogs, New case,
+  Open case, tagging, and every other dialog with a Cancel button, Enter in a
+  text field pressed Cancel because Cancel comes first. Enter now confirms,
+  and clicking Cancel still cancels.
 - **An HFS+ volume's name was never shown.** The volume tree titled an HFS+
   partition only "Partition N", where NTFS, exFAT, FAT and ext volumes show
   their label. The name is now read from the catalog's root folder record
