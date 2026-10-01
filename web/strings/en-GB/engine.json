@@ -418,7 +418,7 @@
   "decmpfs.block_failed": "Block %d could not be decompressed (%s); it reads as zeros.",
   "decmpfs.block_short": "Block %d decompressed to %d of %d bytes; the rest reads as zeros.",
   "hfsplus.links_unresolved": "%d hard link(s) name an indirect node that is not in the private data folder; they are listed with the contents they cannot be given.",
-  "hfsplus.compression_unsupported": "%d file(s) are compressed with a method Strata does not decompress (LZFSE, or one it does not know); they are listed but their contents are not shown.",
+  "hfsplus.compression_unsupported": "%d file(s) are compressed with a method Strata does not decompress (stored raw, or one it does not know); they are listed but their contents are not shown.",
   "hfsplus.compression_damaged": "%d file(s) are flagged compressed but have no readable decmpfs attribute; they are listed as stored.",
   "hfsplus.compressed_no_header": "This file is flagged compressed but has no readable decmpfs attribute, so it is shown as stored.",
   "hfsplus.link_lost": "This is a hard link to inode %d, whose indirect node was not found in the private data folder.",
@@ -427,7 +427,7 @@
   "hfsplus.compressed_unread": "This file is compressed (%s). Strata does not decompress that method, so its contents are not shown.",
   "hfsplus.compressed_failed": "This file is compressed (%s) but could not be read: %s",
   "hfsplus.compressed": "This file is transparently compressed (%s); its size is that of the decompressed data.",
-  "apfs.compression_unsupported": "Some files are compressed with a method Strata does not decompress (LZFSE, or one it does not know); they are listed but their contents are not shown.",
+  "apfs.compression_unsupported": "Some files are compressed with a method Strata does not decompress (stored raw, or one it does not know); they are listed but their contents are not shown.",
   "apfs.compression_damaged": "Some files are flagged compressed but have no readable decmpfs attribute; they are listed as stored.",
   "apfs.compressed_no_header": "This file is flagged compressed but has no readable decmpfs attribute, so it is shown as stored.",
   "apfs.compressed_unread": "This file is compressed (%s). Strata does not decompress that method, so its contents are not shown.",
@@ -443,5 +443,10 @@
   "logfile.torn_pages": "%d log page(s) failed their update sequence check and were skipped.",
   "logfile.unrecognised_pages": "%d log page(s) held neither log records nor unused space and were skipped.",
   "logfile.truncated": "More than %d records were found; the rest are not listed.",
-  "server.logfile.not_found": "This volume has no readable $LogFile."
+  "server.logfile.not_found": "This volume has no readable $LogFile.",
+  "lzfse.truncated": "The LZFSE data ends before the block it describes does.",
+  "lzfse.header_damaged": "An LZFSE block header is damaged or inconsistent.",
+  "lzfse.stream_damaged": "The LZFSE data is damaged: a decoded value is outside what its block allows.",
+  "lzfse.too_large": "The LZFSE data would decode to more than it declares or than is allowed.",
+  "lzfse.bad_magic": "The LZFSE data has a block marker that is not one of the known ones."
 }

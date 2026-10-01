@@ -18,6 +18,10 @@ from engine import decmpfs                                    # noqa: E402
 from engine.ewf import OffsetReader                           # noqa: E402
 from engine.fs.ntfs import open_fs                            # noqa: E402
 
+import lzfse_vectors                                          # noqa: E402
+
+LZ_STREAM, LZ_PLAIN = lzfse_vectors.unpack(lzfse_vectors.LZVN)
+LZ_BIG_STREAM, LZ_BIG = lzfse_vectors.unpack(lzfse_vectors.V2)
 BIG = bytes((i * 7 + i // 251) & 0xFF for i in range(150000))
 SMALL = b"held in the attribute " * 8
 UF_COMPRESSED = 0x20
@@ -97,16 +101,19 @@ class _Mem(object):
         return self.data[offset:offset + length]
 
 
-def compressed_file(kind, data, name, stream_obj=None):
+def compressed_file(kind, data, name, stream_obj=None, blocks=None):
     """(name, flags, xattrs, fork) for `data` held as decmpfs `kind`."""
     if kind in (3, 7):
         codec = dc.zlib_block if kind == 3 else dc.lzvn_literals
         value = dc.inline_value(kind, len(data), codec(data))
         return (name, UF_COMPRESSED,
                 [lambda oid: embedded(oid, "com.apple.decmpfs", value)], None)
-    fork = (dc.zlib_fork([dc.zlib_block(b) for b in dc.split(data)])
-            if kind == 4 else
-            dc.lzvn_fork([dc.lzvn_literals(b) for b in dc.split(data)]))
+    if blocks is not None:
+        fork = dc.lzvn_fork(blocks)           # an offset table, whatever the codec
+    else:
+        fork = (dc.zlib_fork([dc.zlib_block(b) for b in dc.split(data)])
+                if kind == 4 else
+                dc.lzvn_fork([dc.lzvn_literals(b) for b in dc.split(data)]))
     value = dc.header(kind, len(data))
     return (name, UF_COMPRESSED,
             [lambda oid: embedded(oid, "com.apple.decmpfs", value),
@@ -123,9 +130,14 @@ class Compressed(unittest.TestCase):
             compressed_file(7, SMALL, "l-inline"),
             compressed_file(4, BIG, "z-fork"),
             compressed_file(8, BIG, "l-fork"),
+            ("raw", UF_COMPRESSED,
+             [lambda oid: embedded(oid, "com.apple.decmpfs",
+                                   dc.header(9, 900) + b"\xcc")], None),
             ("lzfse", UF_COMPRESSED,
              [lambda oid: embedded(oid, "com.apple.decmpfs",
-                                   dc.header(11, 900) + b"bvx2")], None),
+                                   dc.header(11, len(LZ_PLAIN)) + LZ_STREAM)],
+             None),
+            compressed_file(12, LZ_BIG, "lzfse-fork", blocks=[LZ_BIG_STREAM]),
             ("flagged", UF_COMPRESSED, [], None),
             ("unflagged", 0,
              [lambda oid: embedded(oid, "com.apple.decmpfs",
@@ -152,11 +164,21 @@ class Compressed(unittest.TestCase):
         self.assertEqual(info["compression"]["uncompressed_size"], len(BIG))
         self.assertIn("LZVN", info["note"])
 
-    def test_lzfse_is_reported_not_faked(self):
+    def test_lzfse_is_decompressed(self):
         e = self.v.entry("lzfse")
+        self.assertEqual(e["size"], len(LZ_PLAIN))
+        self.assertEqual(self.fs.read_file(e), LZ_PLAIN)
+
+    def test_lzfse_in_the_resource_fork(self):
+        e = self.v.entry("lzfse-fork")
+        self.assertEqual(e["size"], len(LZ_BIG))
+        self.assertEqual(self.fs.read_file(e), LZ_BIG)
+
+    def test_a_method_that_is_not_read_is_reported_not_faked(self):
+        e = self.v.entry("raw")
         self.assertTrue(e["compression_unsupported"])
         self.assertEqual(self.fs.read_file(e), b"")
-        self.assertIn("LZFSE", self.fs.stat(e)["note"])
+        self.assertIn("raw", self.fs.stat(e)["note"])
         self.assertTrue(any("does not decompress" in f
                             for f in self.fs.info()["findings"]))
 

@@ -177,6 +177,19 @@ def _logfile_seed():
     return b.logfile(specs)[0]
 
 
+def run_lzfse(data):
+    from engine import lzfse
+    try:
+        lzfse.decode(data, max_size=1 << 22)
+    except lzfse.LzfseError:
+        pass
+
+
+def _lzfse_seed():
+    import lzfse_vectors
+    return lzfse_vectors.unpack(lzfse_vectors.CHAIN)[0]
+
+
 def run_ewf(data, _dir=[], name="case.E01"):
     from engine import ewf
     if not _dir:
@@ -405,6 +418,7 @@ def targets():
                      run_reglog)
     out["blockfile"] = (_blockfile_seed, run_blockfile)
     out["logfile"] = (_logfile_seed, run_logfile)
+    out["lzfse"] = (_lzfse_seed, run_lzfse)
     out["pst"] = (lambda: _pst_seed(False, attachment=b"z" * 9000), run_pst)
     out["pst-ansi"] = (lambda: _pst_seed(True, attachment=b"z" * 9000),
                        run_pst)
