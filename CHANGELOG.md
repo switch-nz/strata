@@ -42,6 +42,12 @@ first time it is opened. Nothing else in an existing case needs redoing.
   Tested on synthetic sets only; the members can be raw images or any other
   image format Strata reads.
 
+- **OST files written by Outlook 2013 and later can be read.** These use a
+  64-bit "4k page" format with optionally-compressed data blocks that
+  Microsoft's own [MS-PST] specification doesn't document at all; support
+  is built against libyal/libpff's independently reverse-engineered format
+  documentation instead. Tested on synthetic files only; no real OST file
+  has been checked yet.
 - **BitLocker volumes encrypted with the Elephant diffuser.** Vista and
   Windows 7 volumes using AES-CBC with the Elephant diffuser (encryption
   methods 0x8000/0x8001) are now decrypted, not just identified. Previously

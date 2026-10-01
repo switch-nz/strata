@@ -161,7 +161,7 @@ separate from the tool's suggestions, and never promotes one to the other.
 
 ## Not implemented
 
-EWF v2 (Ex01), FileVault, OST-specific structures, reconstructing events from `$LogFile`, and carving
+EWF v2 (Ex01), FileVault, reconstructing events from `$LogFile`, and carving
 across fragments.
 
 ---

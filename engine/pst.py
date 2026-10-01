@@ -1,11 +1,22 @@
 import datetime
 import struct
+import zlib
 
 MAGIC = b"!BDN"
 MAGIC_CLIENT = b"SM"
 
 VER_ANSI = (14, 15)
 VER_UNICODE = 23
+# The 64-bit Unicode format with 4k (4096-byte) pages that Outlook 2013+
+# writes for OST files (36), including files also marked as protected by
+# Windows Information Protection (37). [MS-PST] does not document this
+# variant at all (it only covers .pst); the page/block layout and block
+# compression below follow libyal/libpff's reverse-engineered "Personal
+# Folder File (PFF) format" documentation and libpff_data_block.c,
+# cross-checked against each other, not a Microsoft source. Only these two
+# observed values are accepted -- not "36 or higher" -- so a genuinely
+# unknown/future version is still reported rather than guessed at.
+VER_UNICODE_4K = (36, 37)
 
 CRYPT_NONE, CRYPT_PERMUTE, CRYPT_CYCLIC = 0, 1, 2
 
@@ -274,6 +285,7 @@ class Pst:
         self.valid = False
         self.findings = []
         self.ansi = False
+        self.page_size = 512
         if len(data) < 14 or data[:4] != MAGIC:
             return
         if data[8:10] != MAGIC_CLIENT:
@@ -296,9 +308,20 @@ class Pst:
                 "wrote. Text in it is stored in a code page rather than "
                 "Unicode; it is decoded with the code page each message "
                 "declares, or Windows-1252 where none is given.")
-        elif self.ver == VER_UNICODE:
+        elif self.ver == VER_UNICODE or self.ver in VER_UNICODE_4K:
+            # The header layout (this "root") is identical for both page
+            # sizes -- only the NDB pages and blocks that root points to
+            # differ. libpff decides 4k-vs-512 the same way: wVer >= 0x24.
             if len(data) < 600:
                 return
+            if self.ver in VER_UNICODE_4K:
+                self.page_size = 4096
+                self.findings.append(
+                    "This is the 64-bit Unicode format with 4k (4096-byte) "
+                    "pages that Outlook 2013 and later write for OST files. "
+                    "It is not documented by Microsoft's own [MS-PST] "
+                    "specification; block and page layout here follow "
+                    "libyal/libpff's reverse-engineered format documentation.")
             root, self.sentinel_at, self.crypt_at = 180, 512, 513
             self.file_eof = struct.unpack_from("<Q", data, root + 4)[0]
             self.nbt_bid = struct.unpack_from("<Q", data, root + 36)[0]
@@ -321,7 +344,7 @@ class Pst:
         self._nbt = None
 
     def _page(self, ib):
-        return self.data[ib:ib + 512]
+        return self.data[ib:ib + self.page_size]
 
     def _walk_bt(self, ib, want_leaf, out, depth=0, seen=None):
         if seen is None:
@@ -330,15 +353,27 @@ class Pst:
             return out
         seen.add(ib)
         page = self._page(ib)
-        if len(page) < 512:
+        if len(page) < self.page_size:
             return out
-        # BTPAGE ([MS-PST] 2.2.2.7.7.1): the counts sit after the entries
-        # and the page trailer at the end; both move up 8 and 4 bytes in ANSI.
-        body = 496 if self.ansi else 488
-        cEnt = page[body]
-        cbEnt = page[body + 2]
-        cLevel = page[body + 3]
-        ptype = page[body + (4 if self.ansi else 8)]     # PAGETRAILER.ptype
+        if self.page_size == 4096:
+            # The 64-bit 4k page index B-tree node: same BTENTRY/BBTENTRY/
+            # NBTENTRY layout as the regular 64-bit page below, just a
+            # taller footer at the 4096-aligned end (counts are 2 bytes
+            # here, not 1). Undocumented by [MS-PST]; see libyal/libpff.
+            body = 4056
+            cEnt = struct.unpack_from("<H", page, body)[0]
+            cbEnt = page[body + 4]
+            cLevel = page[body + 5]
+            ptype = page[4072]
+        else:
+            # BTPAGE ([MS-PST] 2.2.2.7.7.1): the counts sit after the
+            # entries and the page trailer at the end; both move up 8 and
+            # 4 bytes in ANSI.
+            body = 496 if self.ansi else 488
+            cEnt = page[body]
+            cbEnt = page[body + 2]
+            cLevel = page[body + 3]
+            ptype = page[body + (4 if self.ansi else 8)]     # PAGETRAILER.ptype
         if ptype not in (PTYPE_BBT, PTYPE_NBT):
             return out
         for i in range(cEnt):
@@ -385,6 +420,34 @@ class Pst:
                 }
         return self._nbt
 
+    def _decompress_block(self, raw, ib, cb):
+        """A 4k-page block's stored bytes, decompressed if its trailing
+        footer says the real content is longer than what's stored. Only
+        the 64-bit-4k-page (OST) format ever compresses blocks; [MS-PST]
+        doesn't document this at all, so the footer layout and the "is it
+        compressed" test below follow libyal/libpff's
+        libpff_data_block_read_footer_data()/libpff_data_block.c, not a
+        Microsoft source."""
+        if self.page_size != 4096 or not cb:
+            return raw
+        total = -(-cb // 512) * 512          # round up to the next 512
+        if total - cb < 24:                  # must leave room for the footer
+            total += 512
+        footer = self.data[ib + total - 24:ib + total]
+        if len(footer) < 24:
+            return raw
+        usize = struct.unpack_from("<H", footer, 18)[0]
+        if not usize or usize == cb:
+            return raw
+        try:
+            return zlib.decompress(raw)
+        except zlib.error:
+            self.findings.append(
+                "A compressed block at file offset %d claims to expand to "
+                "%d bytes but does not; using its stored bytes undecoded."
+                % (ib, usize))
+            return raw
+
     def blocks_of(self, bid, _depth=0, _out=None):
         out = [] if _out is None else _out
         if not bid or _depth > 16:
@@ -396,6 +459,7 @@ class Pst:
         raw = self.data[ib:ib + cb]
         if len(raw) < cb:
             return out
+        raw = self._decompress_block(raw, ib, cb)
         if bid & 0x02:
             if len(raw) >= 8 and raw[0] == 0x01:
                 count = struct.unpack_from("<H", raw, 2)[0]
@@ -423,6 +487,9 @@ class Pst:
             return out
         ib, cb = loc
         raw = self.data[ib:ib + cb]
+        if len(raw) < cb:
+            return out
+        raw = self._decompress_block(raw, ib, cb)
         if len(raw) < 8 or raw[0] != 0x02:
             return out
         level, count = raw[1], struct.unpack_from("<H", raw, 2)[0]
@@ -753,9 +820,11 @@ class Pst:
         }
 
     def info(self):
+        fmt = ("ANSI (32-bit)" if self.ansi
+               else "Unicode (64-bit, 4k pages)" if self.page_size == 4096
+               else "Unicode (64-bit)")
         return {
-            "type": "pst", "format": "Unicode (64-bit)" if not self.ansi
-            else "ANSI (32-bit)",
+            "type": "pst", "format": fmt,
             "version": getattr(self, "ver", None),
             "client_version": getattr(self, "client_ver", None),
             "encoding": {CRYPT_NONE: "none", CRYPT_PERMUTE: "permute",
