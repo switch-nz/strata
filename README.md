@@ -52,8 +52,8 @@ unallocated space are reachable throughout.
 | **FAT12/16/32** | boot parameter block, cluster chains, long filenames (checked against their short name's checksum), deleted entries with the first character recovered from a surviving long name, file slack, allocated-extent map |
 | **exFAT** | allocation bitmap, up-case table, cluster chains including contiguous (NoFatChain) streams, deleted entries, slack |
 | **ext2/3/4** | inodes, extent trees and legacy block maps, inline data, symlinks, and **jbd2 journal recovery** — superseded metadata recovered from the journal is reported as such |
-| **APFS** | container superblock, object map, B-tree walking, volume records, file extents, and the allocation map |
-| **HFS+/HFSX** | catalog and extents-overflow B-trees, and both forks |
+| **APFS** | container superblock, object map, B-tree walking, volume records, file extents, the allocation map, and transparently compressed files (zlib, LZVN) |
+| **HFS+/HFSX** | catalog and extents-overflow B-trees, both forks, file hard links, listed directory hard links, and transparently compressed files (zlib, LZVN) |
 
 **Encrypted volumes** — BitLocker (FVE), LUKS1 and LUKS2 (Argon2id/i/d and
 PBKDF2 keyslots) unlock with a password or recovery key. The key is held for
@@ -94,8 +94,8 @@ alongside the classification, and the measurement window is always stated.
 
 ## Analysis
 
-**Artefacts** — sixteen parsers: volume layout, encrypted volumes, the change
-journal (`$UsnJrnl`), prefetch, shortcuts and Jump Lists, Recycle Bin,
+**Artefacts** — seventeen parsers: volume layout, encrypted volumes, the change
+journal (`$UsnJrnl`), the NTFS log (`$LogFile`, shown as recorded), prefetch, shortcuts and Jump Lists, Recycle Bin,
 well-known registry keys, shellbags, Amcache and ShimCache, browser history,
 Windows event logs, file-type verification, timeline, hashing every file,
 signature carving, and the content index. Each says what it will cost before
@@ -161,7 +161,8 @@ separate from the tool's suggestions, and never promotes one to the other.
 
 ## Not implemented
 
-EWF v2 (Ex01), FileVault, `$LogFile`, and carving across fragments.
+EWF v2 (Ex01), FileVault, reconstructing events from `$LogFile`, and carving
+across fragments.
 
 ---
 

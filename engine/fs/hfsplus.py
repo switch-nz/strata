@@ -1,6 +1,8 @@
 from .streams import UnsupportedStream
 from .ranges import read_runs
+from .. import decmpfs
 from .. import xattr as xattr_mod
+from ..text import t as _t
 import datetime
 import struct
 
@@ -19,6 +21,15 @@ ATTR_FORK_DATA = 0x20
 ATTR_EXTENTS = 0x30
 
 KIND_LEAF = 0xFF
+
+# Hard links: a file whose type/creator are hlnk/hfs+ (or a folder's fdrp/MACS)
+# stands for an "indirect node" kept in a private folder at the volume root,
+# named for the link's inode number. Compressed files carry UF_COMPRESSED.
+PRIVATE_FILES = "\x00\x00\x00\x00HFS+ Private Data"
+PRIVATE_DIRS = ".HFS+ Private Directory Data\r"
+UF_COMPRESSED = 0x20
+DECMPFS_XATTR = "com.apple.decmpfs"
+_COMPRESSED_CACHE = 8
 
 MAC_EPOCH = datetime.datetime(1904, 1, 1)
 
@@ -196,7 +207,103 @@ class HfsPlus:
                     continue
                 by_parent.setdefault(parent, []).append(rec)
         self._by_parent, self._threads = by_parent, threads
+        self._resolve_links(by_parent)
+        self._resolve_compression(by_parent)
         return by_parent, threads
+
+    def _private_children(self, by_parent, name, prefix):
+        """{number: record} of the entries in the private folder `name`
+        (at the volume root) whose names are `prefix` and a number."""
+        out = {}
+        for folder in by_parent.get(CNID_ROOT_FOLDER, []):
+            if not folder["is_dir"] or folder["name"] != name:
+                continue
+            for rec in by_parent.get(folder["cnid"], []):
+                tail = rec["name"][len(prefix):]
+                if rec["name"].startswith(prefix) and tail.isdigit():
+                    out[int(tail)] = rec
+        return out
+
+    def _resolve_links(self, by_parent):
+        """Give each hard link the content of the file it stands for. The
+        link keeps its own name, place and catalog ID; size, forks and
+        extended attributes come from the indirect node, and so do the
+        modified and accessed times (the node is what is written to)."""
+        inodes = links = dir_links = None
+        lost = 0
+        for recs in by_parent.values():
+            for rec in recs:
+                if rec["is_dir"] or "_ftype" not in rec:
+                    continue
+                kind = (rec["_ftype"], rec["_creator"])
+                if kind == (b"hlnk", b"hfs+"):
+                    if inodes is None:
+                        inodes = self._private_children(
+                            by_parent, PRIVATE_FILES, "iNode")
+                    node = inodes.get(rec["_special"])
+                    rec["hard_link"] = True
+                    rec["link_inode"] = rec["_special"]
+                    if node is None:
+                        rec["hard_link_unresolved"] = True
+                        lost += 1
+                        continue
+                    rec["link_count"] = node["_special"]
+                    rec["hard_link_target"] = "%s/%s" % (
+                        PRIVATE_FILES.replace("\x00", "\u2400"), node["name"])
+                    rec["_content_cnid"] = node["cnid"]
+                    for key in ("size", "resource_size", "_data_extents",
+                                "_data_blocks", "_rsrc_extents",
+                                "_rsrc_blocks", "_owner_flags", "modified",
+                                "accessed", "attr_modified"):
+                        rec[key] = node[key]
+                elif kind == (b"fdrp", b"MACS"):
+                    if dir_links is None:
+                        dir_links = self._private_children(
+                            by_parent, PRIVATE_DIRS, "dir_")
+                    node = dir_links.get(rec["_special"])
+                    rec["hard_link"] = True
+                    rec["hard_link_dir"] = True
+                    rec["link_inode"] = rec["_special"]
+                    if node is None or not node["is_dir"]:
+                        rec["hard_link_unresolved"] = True
+                        lost += 1
+                        continue
+                    rec["hard_link_target"] = "%s/%s" % (PRIVATE_DIRS.strip(), node["name"])
+                    rec["link_target_cnid"] = node["cnid"]
+        if lost:
+            self.findings.append(_t("hfsplus.links_unresolved") % lost)
+
+    def _resolve_compression(self, by_parent):
+        """Note the files that carry UF_COMPRESSED, and take the size of a
+        file Strata can decompress from its decmpfs header."""
+        unsupported = damaged = 0
+        for recs in by_parent.values():
+            for rec in recs:
+                if rec["is_dir"] or not rec.get("_owner_flags", 0) & UF_COMPRESSED:
+                    continue
+                cnid = rec.get("_content_cnid", rec["cnid"])
+                value = None
+                for x in self._xattrs_index().get(cnid, ()):
+                    if x["name"] == DECMPFS_XATTR:
+                        value = x.get("value")
+                        break
+                header = decmpfs.parse_header(value)
+                if header is None:
+                    damaged += 1
+                    rec["compression_damaged"] = True
+                    continue
+                rec["compression"] = decmpfs.describe(header)
+                rec["uncompressed_size"] = header["size"]
+                if header["supported"]:
+                    rec["_decmpfs"] = header
+                    rec["size"] = header["size"]
+                else:
+                    unsupported += 1
+                    rec["compression_unsupported"] = True
+        if unsupported:
+            self.findings.append(_t("hfsplus.compression_unsupported") % unsupported)
+        if damaged:
+            self.findings.append(_t("hfsplus.compression_damaged") % damaged)
 
     @staticmethod
     def _attr_record(node, key_off, data_off):
@@ -216,9 +323,10 @@ class HfsPlus:
         if data_off + 4 > len(node):
             return file_id, {"name": name, "size": None}
         rtype = struct.unpack_from(">I", node, data_off)[0]
-        if rtype == ATTR_INLINE_DATA and data_off + 12 <= len(node):
-            size = struct.unpack_from(">I", node, data_off + 8)[0]
-            value = node[data_off + 12:data_off + 12 + size]
+        # HFSPlusAttrData: type, two reserved words, size, then the value.
+        if rtype == ATTR_INLINE_DATA and data_off + 16 <= len(node):
+            size = struct.unpack_from(">I", node, data_off + 12)[0]
+            value = node[data_off + 16:data_off + 16 + size]
             if len(value) == size:
                 return file_id, {"name": name, "size": size, "value": value}
             return file_id, {"name": name, "size": size}
@@ -262,9 +370,15 @@ class HfsPlus:
         cnid = struct.unpack_from(">I", node, off + 8)[0]
         (created, modified, attr_mod, accessed,
          backup) = struct.unpack_from(">IIIII", node, off + 12)
+        owner_flags = node[off + 41]
+        special = struct.unpack_from(">I", node, off + 44)[0]
+        ftype, creator = bytes(node[off + 48:off + 52]), bytes(node[off + 52:off + 56])
         data_fork = Fork(node, off + 88)
         rsrc_fork = Fork(node, off + 168)
         return {
+            "_owner_flags": owner_flags, "_special": special,
+            "_ftype": ftype, "_creator": creator,
+            "_rsrc_blocks": rsrc_fork.total_blocks,
             "name": name, "is_dir": False, "cnid": cnid, "parent": parent,
             "size": data_fork.logical_size,
             "resource_size": rsrc_fork.logical_size,
@@ -288,13 +402,15 @@ class HfsPlus:
         return out
 
     def _all_extents(self, entry, fork="data"):
-        key = "_data_extents" if fork == "data" else "_rsrc_extents"
-        extents = list(entry.get(key) or [])
+        rsrc = fork != "data"
+        extents = list(entry.get("_rsrc_extents" if rsrc else "_data_extents")
+                       or [])
         total = sum(c for _s, c in extents)
-        want = entry.get("_data_blocks") or 0
-        if fork != "data" or total >= want or not self.extents:
+        want = entry.get("_rsrc_blocks" if rsrc else "_data_blocks") or 0
+        if total >= want or not self.extents:
             return extents
-        cnid = entry.get("cnid")
+        cnid = entry.get("_content_cnid", entry.get("cnid"))
+        wanted_type = 0xFF if rsrc else 0x00
         for node in self.extents.walk_leaves():
             for off in self.extents.records(node):
                 if off + 12 > len(node):
@@ -302,7 +418,7 @@ class HfsPlus:
                 key_len = struct.unpack_from(">H", node, off)[0]
                 fork_type = node[off + 2]
                 rec_cnid = struct.unpack_from(">I", node, off + 4)[0]
-                if rec_cnid != cnid or fork_type != 0x00:
+                if rec_cnid != cnid or fork_type != wanted_type:
                     continue
                 data_off = off + 2 + key_len
                 data_off += data_off & 1
@@ -314,7 +430,31 @@ class HfsPlus:
                         extents.append((s, c))
         return extents
 
+    def _decompressed(self, entry):
+        """The decmpfs reader for a compressed file, or None if it is not
+        one Strata can decompress. Raises DecmpfsError for a file whose
+        compressed data cannot be laid out."""
+        header = entry.get("_decmpfs")
+        if header is None:
+            return None
+        key = entry.get("cnid")
+        cache = self.__dict__.setdefault("_compressed", {})
+        got = cache.get(key)
+        if got is None:
+            rsize = entry.get("resource_size") or 0
+            got = decmpfs.Compressed(
+                header, lambda off, n: self.read_range(entry, off, n, "rsrc"),
+                rsize)
+            if len(cache) >= _COMPRESSED_CACHE:
+                cache.clear()
+            cache[key] = got
+        return got
+
     def read_file(self, entry, max_bytes=None, stream=""):
+        if not stream and "_decmpfs" in entry:
+            comp = self._decompressed(entry)
+            want = comp.size if max_bytes is None else min(comp.size, max_bytes)
+            return comp.read_at(0, want)
         want = entry.get("size") or 0
         if stream in ("rsrc", "resource"):
             want = entry.get("resource_size") or 0
@@ -335,6 +475,8 @@ class HfsPlus:
         return bytes(out[:want])
 
     def read_range(self, entry, off, length, stream=""):
+        if not stream and "_decmpfs" in entry:
+            return self._decompressed(entry).read_at(off, length)
         if stream in ("rsrc", "resource"):
             want = entry.get("resource_size") or 0
             extents = self._all_extents(entry, "rsrc")
@@ -378,10 +520,49 @@ class HfsPlus:
                             % entry["resource_size"])
         if entry.get("is_dir"):
             info["record_offset"] = None
-        xattrs = self._xattrs_index().get(entry.get("cnid"))
+        notes = [info["note"]] if info.get("note") else []
+        if entry.get("hard_link"):
+            info["hard_link"] = {
+                k: entry[k] for k in ("link_inode", "link_count",
+                                      "hard_link_target", "link_target_cnid",
+                                      "hard_link_unresolved") if k in entry}
+            notes.append(self._link_note(entry))
+        if entry.get("compression"):
+            info["compression"] = {"codec": entry["compression"],
+                                   "uncompressed_size": entry["uncompressed_size"]}
+            notes.append(self._compression_note(entry, info))
+        elif entry.get("compression_damaged"):
+            notes.append(_t("hfsplus.compressed_no_header"))
+        if notes:
+            info["note"] = " ".join(notes)
+        xattrs = self._xattrs_index().get(
+            entry.get("_content_cnid", entry.get("cnid")))
         if xattrs:
             info["xattrs"] = xattr_mod.for_client(xattrs)
         return info
+
+    @staticmethod
+    def _link_note(entry):
+        if entry.get("hard_link_unresolved"):
+            return _t("hfsplus.link_lost") % entry["link_inode"]
+        if entry.get("hard_link_dir"):
+            return _t("hfsplus.dir_link") % entry["hard_link_target"]
+        return _t("hfsplus.file_link") % (
+            entry["hard_link_target"], entry.get("link_count", 0))
+
+    def _compression_note(self, entry, info):
+        if entry.get("compression_unsupported"):
+            return _t("hfsplus.compressed_unread") % entry["compression"]
+        try:
+            comp = self._decompressed(entry)
+            comp.read_at(0, 1)
+        except decmpfs.DecmpfsError as exc:
+            return _t("hfsplus.compressed_failed") % (entry["compression"], exc)
+        text = _t("hfsplus.compressed") % entry["compression"]
+        if comp.findings:
+            info["compression"]["findings"] = list(comp.findings)
+            text += " " + " ".join(comp.findings)
+        return text
 
     def label(self):
         try:

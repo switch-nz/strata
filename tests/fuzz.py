@@ -160,6 +160,23 @@ def run_reglog(data, _pair=[]):
     reglog.recover(_pair[0], [data])
 
 
+def run_logfile(data):
+    from engine import logfile
+    try:
+        logfile.parse(lambda off, n: data[off:off + n], len(data))
+    except logfile.LogFileError:
+        pass
+
+
+def _logfile_seed():
+    import imagebuild_logfile as b
+    entry = b.index_entry(20, "secret.doc")
+    specs = [dict(redo_op=0x0E, undo_op=0x0F, redo=entry, undo=entry, tx=i + 1)
+             for i in range(12)]
+    specs.append(dict(type="checkpoint"))
+    return b.logfile(specs)[0]
+
+
 def run_ewf(data, _dir=[], name="case.E01"):
     from engine import ewf
     if not _dir:
@@ -329,6 +346,19 @@ def run_blockfile(data):
     browsercache.parse_blockfile_folder(t.mem(files), "C/x/Cache/Cache_Data")
 
 
+def _hfsplus_seed():
+    import imagebuild_decmpfs as dc
+    import imagebuild_hfsplus as hb
+    value = dc.header(4, 70000)
+    fork = dc.zlib_fork([dc.zlib_block(b) for b in dc.split(bytes(70000))])
+    return hb.build(
+        [hb.File("packed", rsrc=fork, xattrs={"com.apple.decmpfs": value},
+                 owner_flags=0x20),
+         hb.Link("link", 100), hb.DirLink("dirlink", 101)],
+        private_files=[hb.File("iNode100", b"shared", cnid=100)],
+        private_dirs=[hb.Dir("dir_101", [hb.File("in", b"x")], cnid=101)])
+
+
 def _seeds_fs():
     import imagebuild_apfs
     import imagebuild_ext4
@@ -342,6 +372,7 @@ def _seeds_fs():
         "ext4": imagebuild_ext4.build_ext4,
         "ext2": imagebuild_ext4.build_ext2_legacy,
         "apfs": imagebuild_apfs.build_apfs,
+        "hfsplus": _hfsplus_seed,
     }
     try:
         import imagebuild_ntfs
@@ -373,6 +404,7 @@ def targets():
     out["reglog"] = (lambda: imagebuild_registry.build_dirty_pair()[1],
                      run_reglog)
     out["blockfile"] = (_blockfile_seed, run_blockfile)
+    out["logfile"] = (_logfile_seed, run_logfile)
     out["pst"] = (lambda: _pst_seed(False, attachment=b"z" * 9000), run_pst)
     out["pst-ansi"] = (lambda: _pst_seed(True, attachment=b"z" * 9000),
                        run_pst)

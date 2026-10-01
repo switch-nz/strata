@@ -230,7 +230,7 @@ def apsb(oid, xid, omap_oid, root_tree_oid, snap_meta_oid, label=LABEL):
     return seal(buf[:BLOCK_SIZE].ljust(BLOCK_SIZE, b"\x00"))
 
 
-def inode_value(oid, parent, size, is_dir=False, mode=None):
+def inode_value(oid, parent, size, is_dir=False, mode=None, bsd_flags=0):
     if mode is None:
         mode = (0o40755 if is_dir else 0o100644)
     xnum = 1
@@ -242,7 +242,8 @@ def inode_value(oid, parent, size, is_dir=False, mode=None):
                         SNAP_TIME_NS, SNAP_TIME_NS)
     head += struct.pack("<Q", 0)                     # flags
     head += struct.pack("<i", 1 if is_dir else 0)    # nchildren
-    head += b"\x00" * 12                             # default_acl..bsd_flags
+    head += b"\x00" * 8                              # default_acl, write_gen
+    head += struct.pack("<I", bsd_flags)             # bsd_flags at 68..72
     head += struct.pack("<II", 1000, 1000)           # owner, group
     head += struct.pack("<H", mode)                  # mode at 80..82
     head += b"\x00" * 10                             # 82..92 pad to xfields

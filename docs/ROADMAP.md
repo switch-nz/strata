@@ -79,8 +79,14 @@ recognised and refused by name today; these entries are about *reading* it.
 
 ### Filesystems
 
-- [ ] **HFS** (the original, not HFS+), `com.apple.decmpfs` compressed files,
-      and hard links through the private metadata directory.
+- [~] **HFS+ and APFS compression, HFS+ hard links** — `com.apple.decmpfs`
+      files compressed with zlib or LZVN (in the attribute or the resource
+      fork) are decompressed on HFS+ and APFS; HFS+ file hard links read as
+      the file they stand for, and directory hard links are listed with
+      their target. Tested on synthetic volumes (an independent reader,
+      libfshfs, confirmed the builder's hard-link layout). Not done: LZFSE
+      compressed files (listed, contents not shown), APFS hard links, and
+      **HFS** (the original, not HFS+).
 - [~] **APFS snapshots** — snapshots are listed and can be opened as a
       read-only view of the volume. Tested on synthetic images only so far.
 
@@ -108,9 +114,17 @@ recognised and refused by name today; these entries are about *reading* it.
 
 ## Artefacts
 
-- [ ] **`$LogFile`** — the log NTFS keeps for crash recovery. A different
-      structure from `$UsnJrnl` and a much shorter window, but it records the
-      operations rather than a summary per file.
+- [~] **`$LogFile`** — the log NTFS keeps for crash recovery. Restart areas
+      and log records are read and shown as recorded: LSN, transaction,
+      redo/undo operation (name and code), target attribute, and a file name
+      with its timestamps where the payload of an add/delete-index-entry or
+      update-file-name record is a plain `$FILE_NAME` that passes sanity
+      checks. Built from third-party format descriptions and tested on
+      synthetic logs only — no real `$LogFile` has been checked. Not done:
+      deriving the target MFT record number, names from
+      InitializeFileRecordSegment (whole MFT records) or other operations,
+      and any reconstruction of what happened in order (deliberately left
+      out: the log is a ring and an inferred story could mislead).
 - [x] **Browser disk cache** — Chromium blockfile (what Chrome and Edge on
       Windows write for web content), Chromium Simple Cache and Firefox cache2
       entries are read (URL, status, content type, times), separate from the

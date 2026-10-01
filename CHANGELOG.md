@@ -11,6 +11,19 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-01
+
+Adds RAID 0, 1 and 5 assembly, QCOW2 and VirtualBox VDI disk images,
+BitLocker volumes with the Elephant diffuser, compressed files and hard links
+on HFS+ and APFS, a reader for the NTFS log (`$LogFile`), a template editor
+for on-disk structures, configurable folder columns, and a long list of fixes
+to differencing VHDs, event logs and case notes. Most of the new readers have
+been tested on synthetic images only; each entry says so. Upgrade from 0.7.0.
+A previously cached filesystem tree is rebuilt the next time it is opened
+(HFS+ and APFS listings now carry the size of compressed files and the
+contents of hard links); a case that predates RAID sets gains a column the
+first time it is opened. Nothing else in an existing case needs redoing.
+
 ### Added
 
 - **RAID 0, 1 and 5 sets can be assembled from their member images.** Open
@@ -72,9 +85,41 @@ records, not how the code changed.
   and the QCOW2 variants Strata cannot read (external data file, subcluster
   tables, zstd compression). Tested on synthetic images only; DMG and AFF4
   are still refused.
+- **Compressed files on HFS+ and APFS volumes are read.** Files that macOS
+  compresses transparently (the `com.apple.decmpfs` attribute, with the data
+  in the attribute or in the resource fork) showed as empty. Those compressed
+  with zlib or LZVN now show their real size and content, so they can be
+  viewed, hashed and searched; a block that cannot be decompressed reads as
+  zeros and the file's details say so. Files compressed with LZFSE are listed
+  with a note and a volume finding, and their content is not shown. Tested on
+  synthetic volumes only.
+- **HFS+ hard links show the file they stand for.** A hard link showed as an
+  empty file. It now has the size, content, resource fork and attributes of
+  the shared file, keeps its own name and times of creation, and says how many
+  names share it. A link whose shared file is missing is reported as
+  such. Directory hard links (as Time Machine makes) are listed with the
+  folder they stand for, and are not opened as folders, so a link cannot make
+  the tree loop. Tested on synthetic volumes; the layout was checked against
+  an independent reader.
+- **The NTFS log (`$LogFile`) can be read.** A new artefact, "NTFS log",
+  shows the log's restart areas (whether the last shutdown was clean, log
+  version, size) and its log records: LSN, transaction, the redo and undo
+  operation (name and code), and the attribute they act on. Where a record
+  adds, deletes or updates a file name and its payload is a plain
+  `$FILE_NAME` that passes sanity checks, the name, the file it refers to and
+  its four timestamps are shown too. Everything is shown as recorded: the log
+  is a ring, so it is not a full history, and Strata does not infer a
+  sequence of events from it. Torn pages are skipped and counted. Built from
+  published third-party format descriptions and tested on synthetic logs
+  only; it has not been checked against a real `$LogFile`.
 
 ### Fixed
 
+- **HFS+ extended attributes were read from the wrong place in the record,
+  so their sizes and values were wrong.** The value of an inline attribute
+  starts sixteen bytes into its record, not twelve; `com.apple.quarantine`
+  and similar attributes now show their real contents. Resource forks that
+  continue in the extents overflow tree are also read in full.
 - **Sweeping event logs across a volume could use large amounts of memory
   and could not be cancelled promptly.** Every log was read whole and every
   event kept before the newest were picked. Logs are now read a chunk at a
@@ -1165,7 +1210,8 @@ Corroborate results in these areas with another tool before relying on them.
   ([#15](https://github.com/switch-nz/strata/issues/15),
   [#19](https://github.com/switch-nz/strata/issues/19)).
 
-[Unreleased]: https://github.com/switch-nz/strata/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/switch-nz/strata/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/switch-nz/strata/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/switch-nz/strata/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/switch-nz/strata/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/switch-nz/strata/compare/v0.5.1...v0.6.0
