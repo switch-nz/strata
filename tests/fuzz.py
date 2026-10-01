@@ -160,6 +160,23 @@ def run_reglog(data, _pair=[]):
     reglog.recover(_pair[0], [data])
 
 
+def run_logfile(data):
+    from engine import logfile
+    try:
+        logfile.parse(lambda off, n: data[off:off + n], len(data))
+    except logfile.LogFileError:
+        pass
+
+
+def _logfile_seed():
+    import imagebuild_logfile as b
+    entry = b.index_entry(20, "secret.doc")
+    specs = [dict(redo_op=0x0E, undo_op=0x0F, redo=entry, undo=entry, tx=i + 1)
+             for i in range(12)]
+    specs.append(dict(type="checkpoint"))
+    return b.logfile(specs)[0]
+
+
 def run_ewf(data, _dir=[], name="case.E01"):
     from engine import ewf
     if not _dir:
@@ -373,6 +390,7 @@ def targets():
     out["reglog"] = (lambda: imagebuild_registry.build_dirty_pair()[1],
                      run_reglog)
     out["blockfile"] = (_blockfile_seed, run_blockfile)
+    out["logfile"] = (_logfile_seed, run_logfile)
     out["pst"] = (lambda: _pst_seed(False, attachment=b"z" * 9000), run_pst)
     out["pst-ansi"] = (lambda: _pst_seed(True, attachment=b"z" * 9000),
                        run_pst)

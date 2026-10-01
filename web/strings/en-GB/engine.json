@@ -403,5 +403,16 @@
   "raid.parity_differs": "%d of %d stripe rows have parity that does not match their data; the first is at byte %d of the array. This is what the members hold; it can come from a write in progress, a member that was out of date, or a chunk size, order or layout that is not how the set was built.",
   "raid.stores_no_hash": "A RAID set stores no acquisition hash, so there is nothing to verify this against. The digests above are of the array as reassembled now.",
   "server.open.raid_definition": "This case holds no definition for that RAID set, so it cannot be assembled again.",
-  "server.raid.case_needed": "Say which case file to keep the RAID set in: it has no file to name one after."
+  "server.raid.case_needed": "Say which case file to keep the RAID set in: it has no file to name one after.",
+  "logfile.torn_page": "The restart page failed its update sequence check, so it was not read.",
+  "logfile.restart_bad_area": "The restart page's restart area does not lie inside the page.",
+  "logfile.no_restart": "$LogFile has no readable restart page, so its log pages cannot be interpreted.",
+  "logfile.page_size": "The restart area gives a system page size of %d and a log page size of %d; Strata reads 4096-byte pages, so what follows may be misread.",
+  "logfile.data_offset_default": "The restart area's page data offset is not one Strata accepts; 0x40 is used.",
+  "logfile.restarts_differ": "The two restart pages record different current LSNs; the one with the higher LSN is shown as the newest.",
+  "logfile.not_clean": "The newest restart area says NTFS did not shut down cleanly (or the log was in use when the image was taken).",
+  "logfile.torn_pages": "%d log page(s) failed their update sequence check and were skipped.",
+  "logfile.unrecognised_pages": "%d log page(s) held neither log records nor unused space and were skipped.",
+  "logfile.truncated": "More than %d records were found; the rest are not listed.",
+  "server.logfile.not_found": "This volume has no readable $LogFile."
 }
