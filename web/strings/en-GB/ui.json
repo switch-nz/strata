@@ -1096,5 +1096,6 @@
   "logfile.prev": "Prev",
   "logfile.next": "Next",
   "logfile.yes": "yes",
-  "logfile.no": "no"
+  "logfile.no": "no",
+  "part.gpt_name": "GPT name “{name}”"
 }

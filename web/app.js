@@ -1230,7 +1230,11 @@ function partName(p, parts) {
 
 function partDetail(p) {
   if (p.allocated === false) return fmt.bytes(p.size);
-  return `${fmt.bytes(p.size)} · ${p.detected || p.type || 'unrecognised'}`;
+  const parts = [fmt.bytes(p.size), p.detected || p.type || 'unrecognised'];
+  // What the partition table calls it (a GPT partition's name) is separate
+  // from the filesystem's own label shown in the title.
+  if (p.name) parts.push(txt('ui.part.gpt_name', { name: p.name }));
+  return parts.join(' · ');
 }
 
 function partLabel(p, parts) {

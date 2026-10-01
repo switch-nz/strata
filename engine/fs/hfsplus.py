@@ -564,7 +564,34 @@ class HfsPlus:
             text += " " + " ".join(comp.findings)
         return text
 
+    def volume_name(self):
+        """The volume's name: the key of the root folder's record, whose
+        parent ID is 1 and so sorts first in the catalog. It is read from the
+        start of the first leaf node, without walking the tree."""
+        try:
+            node = self.catalog.node(self.catalog.first_leaf)
+            if len(node) < 14 or node[8] != KIND_LEAF:
+                return None
+            for off in self.catalog.records(node):
+                if off + 8 > len(node):
+                    break
+                parent = struct.unpack_from(">I", node, off + 2)[0]
+                if parent != 1:
+                    break
+                key_len = struct.unpack_from(">H", node, off)[0]
+                data_off = off + 2 + key_len
+                data_off += data_off & 1
+                if data_off + 2 <= len(node) and struct.unpack_from(
+                        ">H", node, data_off)[0] == REC_FOLDER:
+                    return _uni_name(node, off + 6)[0] or None
+        except (struct.error, ValueError):
+            return None
+        return None
+
     def label(self):
+        name = self.volume_name()
+        if name:
+            return name
         try:
             _by_parent, threads = self._index()
         except Exception:
