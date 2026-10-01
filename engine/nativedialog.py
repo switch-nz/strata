@@ -8,7 +8,8 @@ TIMEOUT = 300
 
 IMAGE_TYPES = [
     ("Evidence images", "*.E01 *.Ex01 *.L01 *.dd *.raw *.img *.001 *.bin "
-                        "*.vhdx *.avhdx *.vmdk *.vhd *.vdi *.qcow2 *.ad1 *.aff"),
+                        "*.vhdx *.avhdx *.vmdk *.vhd *.vdi *.qcow2 *.ad1 *.aff "
+                        "*.aff4"),
     ("EnCase / EWF", "*.E01 *.Ex01 *.L01"),
     ("Raw", "*.dd *.raw *.img *.001 *.bin"),
     ("Virtual disks", "*.vhdx *.avhdx *.vmdk *.vhd *.vdi *.qcow2"),

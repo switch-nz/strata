@@ -12,6 +12,7 @@ from . import vmdk as vmdk_mod
 from . import vdi as vdi_mod
 from . import qcow2 as qcow2_mod
 from . import dmg as dmg_mod
+from . import aff4 as aff4_mod
 from .inflate import DAMAGED, STOPPED, inflate_capped, inflate_ended
 import zlib
 from collections import OrderedDict
@@ -783,6 +784,15 @@ def _open_owning(path, fh, head, tail=b""):
                                    exc.advice)
 
 def open_image(path):
+    if aff4_mod.looks_like_aff4(path):
+        # AFF4 is a Zip64 container with no magic bytes of its own, so it is
+        # matched by extension only; Aff4Image's own parsing then requires
+        # the interior AFF4 markers before accepting the file.
+        try:
+            return aff4_mod.Aff4Image(path, open(path, "rb"))
+        except aff4_mod.Aff4Error as exc:
+            raise UnsupportedContainer(_t("ewf.advanced_forensic_format") % exc.message,
+                                       exc.advice)
     with open(path, "rb") as fh:
         head = fh.read(128)
         # A DMG has no signature at the start; its koly trailer is the last
