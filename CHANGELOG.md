@@ -31,6 +31,11 @@ records, not how the code changed.
 
 ### Fixed
 
+- **A cut-off name in the evidence tree can be read in full.** The tree is
+  narrow, so a long line such as a partition's "volume label ..." detail was
+  shown with an ellipsis and the rest was unreachable. Hovering over a row now
+  shows its full text.
+
 - **Pressing Enter in a dialog cancelled it instead of submitting it.** In
   the BitLocker and LUKS unlock dialog, the examiner-name dialogs, New case,
   Open case, tagging, and every other dialog with a Cancel button, Enter in a

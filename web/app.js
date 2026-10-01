@@ -1151,6 +1151,9 @@ function node({ label, tag, meta = null, cls = '', depth = 0,
     </span>${tag ? `<span class="tag">${tag}</span>` : ''}`;
   $('.label', el).textContent = label;
   if (meta) $('.meta', el).textContent = meta;
+  // The tree pane is narrow and both lines ellipsise; the hover title keeps
+  // the full text (a filesystem label, say) reachable.
+  $('.stack', el).title = meta ? `${label}\n${meta}` : label;
 
   if (onPick) {
     const box = $('.pick', el);
