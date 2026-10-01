@@ -11,6 +11,7 @@ from . import ad1 as ad1_mod
 from . import vmdk as vmdk_mod
 from . import vdi as vdi_mod
 from . import qcow2 as qcow2_mod
+from . import dmg as dmg_mod
 from .inflate import DAMAGED, STOPPED, inflate_capped, inflate_ended
 import zlib
 from collections import OrderedDict
@@ -723,6 +724,9 @@ class RawImage:
                 "findings": list(self.findings)}
 
 UNSUPPORTED = (
+    (b"sprs", "Apple sparse image",
+     "A growable Apple image (.sparseimage), a different format from DMG. "
+     "Convert it with hdiutil convert -format UDRW first."),
     (b"AFF\x00", "Advanced Forensic Format (AFF)",
      "Not implemented. Convert to E01 or raw first."),
     (b"EVF2\x0d\x0a\x81\x00", "EWF2 / Ex01",
@@ -757,9 +761,15 @@ def identify_unsupported(head):
             return fmt, advice
     return None
 
-def _open_owning(path, fh, head):
-    """VDI and QCOW2: the reader takes over `fh` and closes it, also when
-    it refuses the file."""
+def _open_owning(path, fh, head, tail=b""):
+    """VDI, QCOW2 and DMG: the reader takes over `fh` and closes it, also
+    when it refuses the file."""
+    if dmg_mod.looks_like_dmg(tail):
+        try:
+            return dmg_mod.DmgImage(path, fh)
+        except dmg_mod.DmgError as exc:
+            raise UnsupportedContainer(_t("ewf.apple_dmg") % exc.message,
+                                       exc.advice)
     if vdi_mod.looks_like_vdi(head):
         try:
             return vdi_mod.VdiImage(path, fh)
@@ -775,12 +785,20 @@ def _open_owning(path, fh, head):
 def open_image(path):
     with open(path, "rb") as fh:
         head = fh.read(128)
-        if vdi_mod.looks_like_vdi(head) or qcow2_mod.looks_like_qcow(head):
+        # A DMG has no signature at the start; its koly trailer is the last
+        # 512 bytes of the file.
+        tail = b""
+        end = os.fstat(fh.fileno()).st_size
+        if end >= dmg_mod.TRAILER:
+            fh.seek(end - dmg_mod.TRAILER)
+            tail = fh.read(dmg_mod.TRAILER)
+        if dmg_mod.looks_like_dmg(tail) or vdi_mod.looks_like_vdi(head) \
+                or qcow2_mod.looks_like_qcow(head):
             # These readers take over a duplicate of this handle (and close
             # it, also when they refuse the file) rather than opening the
             # path again; each seeks before every read.
             return _open_owning(path, os.fdopen(os.dup(fh.fileno()), "rb"),
-                                head)
+                                head, tail)
     sig = head[:8]
     if sig in (EVF_SIG, LVF_SIG) or sig == EVF2_SIG:
         return EwfImage(path)

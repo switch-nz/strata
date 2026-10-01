@@ -21,6 +21,13 @@ records, not how the code changed.
   (compression types 9 and 10) are still listed without content. A cached
   HFS+ or APFS filesystem tree is rebuilt the next time it is opened, so
   these files show their size. Tested on synthetic volumes only.
+- **Apple disk images (DMG) can be opened.** Images with raw, zero-fill,
+  zlib, bzip2, LZMA and LZFSE chunks are read like any other disk: the
+  partitions and filesystems inside are found, and a damaged chunk reads as
+  zeros and is reported. An encrypted or multi-file image, a sparse image,
+  or one that uses ADC chunks is refused with the reason and what to do about
+  it, rather than shown partly. Tested on synthetic images only; images
+  written by Apple's own tools have not been checked.
 
 ## [0.8.0] - 2026-10-01
 

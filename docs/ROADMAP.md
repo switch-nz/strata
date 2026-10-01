@@ -54,7 +54,13 @@ recognised and refused by name today; these entries are about *reading* it.
       undo VDI) is refused rather than shown alone, as are encrypted
       QCOW2, external data files, subcluster (extended L2) tables and
       zstd-compressed clusters. Reading through a backing chain is not done.
-- [ ] **DMG**, **AFF / AFF4** — AFF4 is ZIP-based and is
+- [~] **DMG** (Apple UDIF) — read, with raw, zero-fill, zlib, bzip2, LZMA
+      and LZFSE chunks. Verified only against synthetic images built from the
+      published layout (plus a real LZFSE stream from Apple's encoder);
+      images written by Apple's tools still need checking. Encrypted,
+      segmented and sparse images, and images with ADC chunks, are refused
+      with a reason; reading a sparse bundle (a folder) is not done.
+- [ ] **AFF / AFF4** — AFF4 is ZIP-based and is
       deliberately not matched by signature, since refusing every ordinary
       archive to catch one image format would be wrong far more often than
       right.

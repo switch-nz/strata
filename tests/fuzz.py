@@ -210,6 +210,17 @@ def run_ewf(data, _dir=[], name="case.E01"):
         img.close()
 
 
+def run_dmg(data):
+    run_ewf(data, name="disk.dmg")
+
+
+def _dmg_seed():
+    import imagebuild_dmg
+    rng = random.Random(1)
+    disk = bytes(rng.choice(b"abcdefgh \n") for _ in range(512 * 48))
+    return imagebuild_dmg.build([("disk image", 0, disk)])
+
+
 def run_vdi(data):
     run_ewf(data, name="disk.vdi")
 
@@ -419,6 +430,7 @@ def targets():
     out["blockfile"] = (_blockfile_seed, run_blockfile)
     out["logfile"] = (_logfile_seed, run_logfile)
     out["lzfse"] = (_lzfse_seed, run_lzfse)
+    out["dmg"] = (_dmg_seed, run_dmg)
     out["pst"] = (lambda: _pst_seed(False, attachment=b"z" * 9000), run_pst)
     out["pst-ansi"] = (lambda: _pst_seed(True, attachment=b"z" * 9000),
                        run_pst)

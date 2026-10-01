@@ -2,7 +2,8 @@
 the tests need no dependency. Each is a pair of base64 strings: the compressed
 stream and its plain text (zlib-packed to keep this file small). V2 is a
 `bvx2` block with literals and matches, LZVN a `bvxn` block, RAW a `bvx-`
-block, and CHAIN the three blocks in one stream."""
+block, and CHAIN the three blocks in one stream. SECTORS is a whole number
+of 512-byte sectors (4096 bytes), for disk image chunks."""
 
 import base64
 import zlib
@@ -187,6 +188,58 @@ CHAIN = ((
         'L9t69ey7V5z7r99tWf7mvj+978zP3vb+yzdv2/KhN9d/9K2Vz61c8vix4/c9cffCL/6y7Yq3'
         'P3Pplzc+ffqZTacufOo/KydePP2uOxeXL/nz7pPbz//503dd9uq2I92D4Zwzn91zfNPH/wva'
         'WLXR'))
+
+
+SECTORS = ((
+        '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'),
+(
+        'eNpdV1uO3DAMu0qOEL/t40zQQVtgt12g+zWnbyKSsjM/k7FjyzJFSsrPx+fno6Tt+f3oYXt+'
+        '/fv98fdPDduP58f3o+7bz+t9zRjv2+Pj69cjN1uOd6PiXRx4Wcr1svXt+9f5zNvr/K0Do963'
+        '43okm400kG0yFO6n3bbbohKwNQxMdy47XbNjB0+vMmKrW7iciMVMhH4NUoM98z3vdG/oysn2'
+        'R87z0WG8wd/TqK1J9AQO5miP0dwSl/ER7bzGPQ3ed4JWJgZANuPgE/Dr+IJVp0VAApOlXi8H'
+        'MfVzq/70rH9mRbvLbrsz3Q/c79tCw0TCobliHYJdI18yDLUv2+C6+BAwTgCtR2IIXwyNQdOB'
+        'qASbDcQiMeBdEdVB7ul5uIWSUYo8WYHJDNsgXRs9NE6UAQx39xYQM4pkV7K1wdkxop/NCDUQ'
+        'ppL1FVSr7uNJNzMMV8lEDLpBEZK0YI/dAw+CMBgnzSGCAxfFYTZHx01uwxAsvHgx7zOVE3Fj'
+        '+h0ZyEz/RKPTgclfHG1J4Qz49Z8Qxl3X4WLhGEiy4GaabRwUZGBsht3nVOtr8SEBAxCmzoBT'
+        '28ltDsh6ZyCvXwne+XiKRonimvcQBhIxNpcaktCxwC5KdaKSSKE6JlNhLmbHUTlRnF7wSrwC'
+        'EmxjzopMjjg77ATK3gURKjkBXjcqnv+uiTTlTsENZSfjU3UVKxcUDyFUwQuAQJoNUv+MMHHr'
+        'UpVdJZAInBR+g5mSYEBUuoqSq2N4OgmXGuI/yA2FwC6Oc3yPxDxMBD269LEV3rjzYvdAsMPu'
+        'AkGmgCxbUuZ5WqKCAhkQlqfY3tlJnqV9rXdDT7rSk+cXJGGgzVXVKy5pHIlIJmRJSZVmQH0U'
+        'NEHuzGjCubjwgSSNIjaB+GYlAuiEo4Y6mkDN7MVlKCsTlQYFjyVpgP6zLiQPc/SwgOLtjpUU'
+        '2QExuwMm5mnQfenGE3Bm8G4jul9AFtQrJH0P6gTWnqLzqc1FrYzXFQMh3zsQj1mG0SQNcFe6'
+        'C7kNr7fwcF/bg46AFsyJv8zzYeaLA4UcbqpTmp6wV0o8ksFCaejul6A40D68a2TWOMqXLVNm'
+        'vLpHdLZNpAseBF1lPY1lvS3LTsylj6zlVgEpNI/Je3lqTZGFMohVya4Q5RSMw8qmLl1htpoD'
+        'MS/MQu0AT6rSRBQxcS/cVgU0LnxAYK2WSRj0q5ElanNj5dGCVt5egDvnB/VfbXW9d1ijikng'
+        'p3pHwMl7ZxrwvCUIRlgy/NPy+oFy8LIGGFlA4L+QkXVTWb0pNlbvBVQkd09nuDSc6m9VQ5BE'
+        'ZWMghRQj/TTirTZxpNV/j8BSoyZL17buvjJ1agS2ycEyO0r1yMbuA7iBp9BR656AVPHhHsd9'
+        'V89+4G5PFGWbQiA8NDEtNV3uHchbqB5RHyKTH+yEj6UXUd5I+soR69WTztKPMXWuHrRvawVz'
+        '5Sm+SzMEPSjd5KUaqAoApdSU4KCv2TXjDKM98no3Tabk9RKR8cD17daAovOtsz9QgUJuBmA5'
+        'MdHoywTR1T2SWCwNQvUE1b/YUCDVcbwptQyn+NKR9OhkASFfSw1V8xKiPswQPXz7sZPaqU0E'
+        'DL0I6D0/3Lq+PZAHqHweXXaae+s4Ghz+D9RnL6E='))
 
 
 def unpack(pair):
