@@ -1097,5 +1097,5 @@
   "logfile.next": "Next",
   "logfile.yes": "yes",
   "logfile.no": "no",
-  "part.gpt_name": "GPT name “{name}”"
+  "part.volume_label": "volume label “{name}”"
 }

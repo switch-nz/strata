@@ -1225,15 +1225,19 @@ function partName(p, parts) {
   if (p.allocated === false) return txt('ui.unpartitioned_space');
   if (logicalRegion(p)) return p.slot;
   const n = partNumber(p, parts);
-  return `Partition ${n === null ? '?' : n}${p.label ? ` “${p.label}”` : ''}`;
+  // The name the partition table gives the partition (as FTK Imager and
+  // Disk Management show it); a partition with none, as on an MBR disk, is
+  // titled by its filesystem's label instead.
+  const name = p.name || p.label;
+  return `Partition ${n === null ? '?' : n}${name ? ` “${name}”` : ''}`;
 }
 
 function partDetail(p) {
   if (p.allocated === false) return fmt.bytes(p.size);
   const parts = [fmt.bytes(p.size), p.detected || p.type || 'unrecognised'];
-  // What the partition table calls it (a GPT partition's name) is separate
-  // from the filesystem's own label shown in the title.
-  if (p.name) parts.push(txt('ui.part.gpt_name', { name: p.name }));
+  // The title carries the partition's name; the filesystem's own label is a
+  // separate thing and is shown here when there is both.
+  if (p.name && p.label) parts.push(txt('ui.part.volume_label', { name: p.label }));
   return parts.join(' · ');
 }
 

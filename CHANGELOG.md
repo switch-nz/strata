@@ -35,10 +35,13 @@ records, not how the code changed.
   partition only "Partition N", where NTFS, exFAT, FAT and ext volumes show
   their label. The name is now read from the catalog's root folder record
   (cheaply, without reading the whole catalog) and shown like the others.
-- **A GPT partition's own name was not shown in the volume tree.** The name
-  the partition table gives a partition (what Disk Management and FTK Imager
-  show) was only in the details panel. The tree now shows it beside the size
-  and filesystem, apart from the filesystem's own label.
+- **A GPT partition was titled by its filesystem's label, not its own
+  name.** The volume tree showed “Partition 3” and the filesystem's label,
+  where Disk Management and FTK Imager show the name the partition table
+  gives the partition. The tree now titles the partition with that name and
+  shows the filesystem's label beside the size and type ("volume label …").
+  A partition with no name of its own, as on an MBR disk, is still titled
+  by its label.
 - **The GPT's own tables were reported as unpartitioned space.** The space
   between the protective MBR and the first usable sector (the GPT header and
   partition array) was part of the first "Unpartitioned space" entry, and the
