@@ -63,6 +63,9 @@ def compressed(name, kind, data, **kw):
                    owner_flags=0x20, **kw)
 
 
+import lzfse_vectors                                          # noqa: E402
+
+LZ_STREAM, LZ_PLAIN = lzfse_vectors.unpack(lzfse_vectors.V2)
 BIG = bytes((i * 7 + i // 251) & 0xFF for i in range(150000))
 
 
@@ -156,8 +159,10 @@ class Compression(unittest.TestCase):
              compressed("empty", 3, b""),
              hb.File("stored", rsrc=dc.zlib_fork([dc.zlib_block(b"raw!", True)]),
                      xattrs={XATTR: dc.header(4, 4)}, owner_flags=0x20),
-             hb.File("lzfse", xattrs={XATTR: dc.header(11, 500) + b"bvx2"},
+             hb.File("raw", xattrs={XATTR: dc.header(9, 500) + b"\xcc"},
                      owner_flags=0x20),
+             hb.File("lzfse", xattrs={XATTR: dc.header(
+                 11, len(LZ_PLAIN)) + LZ_STREAM}, owner_flags=0x20),
              hb.File("noattr", b"stored text", owner_flags=0x20),
              hb.Link("linked", 200)],
             private_files=[node]))
@@ -202,14 +207,21 @@ class Compression(unittest.TestCase):
         self.assertEqual(info["compression"]["uncompressed_size"], len(BIG))
         self.assertIn("LZVN", info["note"])
 
-    def test_lzfse_is_reported_and_not_faked(self):
+    def test_lzfse_is_decompressed(self):
         e = find(self.fs, "lzfse")
+        self.assertEqual(e["size"], len(LZ_PLAIN))
+        self.assertEqual(self.fs.read_file(e), LZ_PLAIN)
+        self.assertIn("LZFSE", self.fs.stat(e)["note"])
+
+    def test_a_method_that_is_not_read_is_reported_and_not_faked(self):
+        e = find(self.fs, "raw")
         self.assertTrue(e["compression_unsupported"])
         self.assertEqual(e["size"], 0)
         self.assertEqual(self.fs.read_file(e), b"")
         self.assertEqual(e["uncompressed_size"], 500)
-        self.assertIn("LZFSE", self.fs.stat(e)["note"])
-        self.assertTrue(any("LZFSE" in f for f in self.fs.info()["findings"]))
+        self.assertIn("raw", self.fs.stat(e)["note"])
+        self.assertTrue(any("does not decompress" in f
+                            for f in self.fs.info()["findings"]))
 
     def test_flag_without_attribute_is_shown_as_stored(self):
         e = find(self.fs, "noattr")

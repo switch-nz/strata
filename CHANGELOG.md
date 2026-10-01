@@ -11,6 +11,17 @@ records, not how the code changed.
 
 ## [Unreleased]
 
+### Added
+
+- **LZFSE-compressed files are read on HFS+ and APFS.** Files macOS
+  compresses with LZFSE (the method newer macOS versions prefer) were listed
+  with a note and a volume finding but their content was not shown. They are
+  now decompressed like zlib and LZVN ones. The decoder was checked against
+  streams written by Apple's own reference encoder; only files stored raw
+  (compression types 9 and 10) are still listed without content. A cached
+  HFS+ or APFS filesystem tree is rebuilt the next time it is opened, so
+  these files show their size. Tested on synthetic volumes only.
+
 ## [0.8.0] - 2026-10-01
 
 Adds RAID 0, 1 and 5 assembly, QCOW2 and VirtualBox VDI disk images,

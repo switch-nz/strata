@@ -143,7 +143,7 @@ class Header(unittest.TestCase):
         for kind, (codec, fork) in want.items():
             h = decmpfs.parse_header(build.header(kind, 1))
             self.assertEqual((h["codec"], h["in_resource_fork"]), (codec, fork))
-            self.assertEqual(h["supported"], codec in ("zlib", "LZVN"))
+            self.assertEqual(h["supported"], codec in ("zlib", "LZVN", "LZFSE"))
 
     def test_other_values_are_not_headers(self):
         for value in (None, b"", b"fpmc", b"fpmc" + bytes(11),
@@ -157,8 +157,7 @@ class Header(unittest.TestCase):
         self.assertIn("type 99", decmpfs.describe(h))
 
     def test_an_unsupported_codec_is_refused_by_name(self):
-        for kind, text in ((11, "LZFSE"), (12, "LZFSE"), (9, "raw"),
-                           (5, "type 5")):
+        for kind, text in ((9, "raw"), (10, "raw"), (5, "type 5")):
             h = decmpfs.parse_header(build.header(kind, 10))
             with self.assertRaises(decmpfs.DecmpfsError) as cm:
                 decmpfs.Compressed(h)
@@ -312,6 +311,35 @@ class Attribute(unittest.TestCase):
         h = decmpfs.parse_header(build.header(3, 1 << 40))
         with self.assertRaises(decmpfs.DecmpfsError):
             decmpfs.Compressed(h)
+
+
+class Lzfse(unittest.TestCase):
+    """Types 11 and 12, with streams from Apple's encoder."""
+
+    @classmethod
+    def setUpClass(cls):
+        import lzfse_vectors as v
+        cls.stream, cls.plain = v.unpack(v.V2)
+
+    def test_attribute_type(self):
+        c = compressed(build.header(11, len(self.plain)) + self.stream)
+        self.assertEqual(c.read_at(0, len(self.plain)), self.plain)
+        self.assertEqual(c.read_at(100, 50), self.plain[100:150])
+
+    def test_resource_fork_type_with_a_stored_block_and_a_compressed_one(self):
+        first = bytes(range(256)) * 256               # a whole 64 KiB block
+        fork = build.lzvn_fork([b"\xff" + first, self.stream])
+        c = compressed(build.header(12, len(first) + len(self.plain)), fork)
+        data = first + self.plain
+        self.assertEqual(c.read_at(0, len(data)), data)
+        self.assertEqual(c.read_at(65530, 20), data[65530:65550])
+        self.assertEqual(c.findings, [])
+
+    def test_a_damaged_block_reads_as_zeros_and_says_so(self):
+        c = compressed(build.header(11, len(self.plain))
+                       + self.stream[:len(self.stream) // 2])
+        self.assertEqual(c.read_at(0, len(self.plain)), bytes(len(self.plain)))
+        self.assertTrue(c.findings)
 
 
 class ResourceFork(unittest.TestCase):

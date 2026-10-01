@@ -17,12 +17,12 @@ into blocks of 64 KiB of uncompressed data each:
    7    LZVN           attribute
    8    LZVN           resource fork
    9/10 stored raw     (attribute / resource fork; not read here)
-  11/12 LZFSE          (attribute / resource fork; not read here)
+  11/12 LZFSE          (attribute / resource fork)
 
 The numbering and the block tables follow libfshfs and Apple's published
-LZFSE sources; only zlib and LZVN are decoded. A block that is stored
-uncompressed starts with a marker byte (0xFF for zlib, 0x06 for LZVN) and
-carries the data after it."""
+LZFSE sources; zlib, LZVN and LZFSE are decoded. A block that is stored
+uncompressed starts with a marker byte (0xFF for zlib and LZFSE, 0x06 for
+LZVN) and carries the data after it."""
 
 import struct
 import zlib
@@ -45,7 +45,7 @@ TYPES = {
     9: (CODEC_RAW, False), 10: (CODEC_RAW, True),
     11: (CODEC_LZFSE, False), 12: (CODEC_LZFSE, True),
 }
-SUPPORTED = (CODEC_ZLIB, CODEC_LZVN)
+SUPPORTED = (CODEC_ZLIB, CODEC_LZVN, CODEC_LZFSE)
 
 
 class DecmpfsError(ValueError):
@@ -212,7 +212,18 @@ def _lzvn_block(data, expected):
     return lzvn_decode(data, expected)
 
 
-_BLOCK_DECODERS = {CODEC_ZLIB: _zlib_block, CODEC_LZVN: _lzvn_block}
+def _lzfse_block(data, expected):
+    if data[:1] == b"\xff":                     # stored: 0xFF, then the data
+        return bytes(data[1:1 + expected])
+    from . import lzfse                         # (it uses this module's LZVN)
+    try:
+        return lzfse.decode(data, max_size=max(expected, 1))[:expected]
+    except lzfse.LzfseError as exc:
+        raise DecmpfsError(str(exc))
+
+
+_BLOCK_DECODERS = {CODEC_ZLIB: _zlib_block, CODEC_LZVN: _lzvn_block,
+                   CODEC_LZFSE: _lzfse_block}
 
 
 class Compressed:
