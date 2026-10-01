@@ -432,5 +432,16 @@
   "apfs.compressed_no_header": "This file is flagged compressed but has no readable decmpfs attribute, so it is shown as stored.",
   "apfs.compressed_unread": "This file is compressed (%s). Strata does not decompress that method, so its contents are not shown.",
   "apfs.compressed_failed": "This file is compressed (%s) but could not be read: %s",
-  "apfs.compressed": "This file is transparently compressed (%s); its size is that of the decompressed data."
+  "apfs.compressed": "This file is transparently compressed (%s); its size is that of the decompressed data.",
+  "logfile.torn_page": "The restart page failed its update sequence check, so it was not read.",
+  "logfile.restart_bad_area": "The restart page's restart area does not lie inside the page.",
+  "logfile.no_restart": "$LogFile has no readable restart page, so its log pages cannot be interpreted.",
+  "logfile.page_size": "The restart area gives a system page size of %d and a log page size of %d; Strata reads 4096-byte pages, so what follows may be misread.",
+  "logfile.data_offset_default": "The restart area's page data offset is not one Strata accepts; 0x40 is used.",
+  "logfile.restarts_differ": "The two restart pages record different current LSNs; the one with the higher LSN is shown as the newest.",
+  "logfile.not_clean": "The newest restart area says NTFS did not shut down cleanly (or the log was in use when the image was taken).",
+  "logfile.torn_pages": "%d log page(s) failed their update sequence check and were skipped.",
+  "logfile.unrecognised_pages": "%d log page(s) held neither log records nor unused space and were skipped.",
+  "logfile.truncated": "More than %d records were found; the rest are not listed.",
+  "server.logfile.not_found": "This volume has no readable $LogFile."
 }

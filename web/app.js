@@ -6158,12 +6158,12 @@ const ART_RENDER = {
 };
 
 const ART_ORDER = ['recyclebin', 'lnk', 'browser', 'appcompat', 'prefetch',
-                   'evtx', 'usn', 'shellbags', 'mail', 'leveldb', 'vss', 'snapshots',
+                   'evtx', 'usn', 'logfile', 'shellbags', 'mail', 'leveldb', 'vss', 'snapshots',
                    'wallets'];
 const ART_LABEL = {
   recyclebin: 'Recycle Bin', lnk: 'Shortcuts', browser: 'Browsing',
   appcompat: 'Programs', prefetch: 'Execution', evtx: txt('ui.tree.events'),
-  usn: txt('ui.change_journal'),
+  usn: txt('ui.change_journal'), logfile: txt('ui.tree.logfile'),
   shellbags: 'Folders', mail: 'Mail', leveldb: 'LevelDB',
   vss: txt('ui.tree.shadow_copies'), snapshots: txt('ui.tree.apfs_snapshots'),
   wallets: 'Crypto',
@@ -6272,6 +6272,10 @@ function showArtPick(part) {
   if (artPick.mode === 'usn') {
     usnPage = 0; usnQuery = ''; usnReason = '';
     return loadUsn(part);
+  }
+  if (artPick.mode === 'logfile') {
+    logPage = 0; logQuery = ''; logOp = '';
+    return loadLogfile(part);
   }
   const draw = ART_RENDER[artPick.mode];
   if (draw) draw(r, part);
@@ -6393,6 +6397,7 @@ function showCachedArtefact(mode, part) {
   const hit = artCache.get(artKey(mode, part));
   if (!hit) return false;
   if (mode === 'usn') { usnPage = 0; usnQuery = ''; usnReason = ''; loadUsn(part); return true; }
+  if (mode === 'logfile') { logPage = 0; logQuery = ''; logOp = ''; loadLogfile(part); return true; }
   const draw = ART_RENDER[mode];
   if (!draw) return false;
   draw(hit, part);
@@ -6500,6 +6505,24 @@ async function doArtifacts(force = false) {
     usnPage = 0; usnQuery = ''; usnReason = '';
     artCache.set(artKey('usn', part), true);
     return loadUsn(part);
+  }
+  if (artMode === 'logfile') {
+    const have = await api.get('logfile', { limit: 1 });
+    if (!(have.loaded && have.part === part)) {
+      const t = await api.post('logfile', { part });
+      const r = await awaitTask(t, txt('ui.tree.logfile'), {
+        modal: { title: txt('ui.reading_logfile'), detail: txt('ui.logfile.caveat') },
+      });
+      if (!r) return null;
+      if (!r.present || r.error) {
+        $('#art-results').innerHTML =
+          `<p class="empty">${esc(r.note || r.error)}</p>`;
+        return null;
+      }
+    }
+    logPage = 0; logQuery = ''; logOp = '';
+    artCache.set(artKey('logfile', part), true);
+    return loadLogfile(part);
   }
   if (artMode === 'shellbags') {
     const t = await api.post('shellbags', { part });
@@ -9454,6 +9477,107 @@ function renderUsn(r, part) {
     clearTimeout(t);
     const v = e.target.value;
     t = setTimeout(() => { usnQuery = v; usnPage = 0; loadUsn(part); }, 250);
+  });
+  initColumnResize();
+}
+
+let logPage = 0, logQuery = '', logOp = '';
+const LOG_PER_PAGE = 200;
+
+async function loadLogfile(part) {
+  const r = await api.get('logfile', {
+    offset: logPage * LOG_PER_PAGE, limit: LOG_PER_PAGE,
+    q: logQuery || undefined, op: logOp || undefined,
+  });
+  if (!r.loaded) {
+    $('#art-results').innerHTML =
+      `<p class="empty">${txt('ui.logfile.not_read_yet')}</p>`;
+    return;
+  }
+  renderLogfile(r, part);
+}
+
+function renderLogfile(r, part) {
+  const rep = r.report || {}, st = rep.stats || {};
+  const newest = (rep.restart || []).find(x => x.page === rep.newest_restart) || {};
+  const pages = Math.max(1, Math.ceil(r.total / LOG_PER_PAGE));
+  const yesno = v => txt(v ? 'ui.logfile.yes' : 'ui.logfile.no');
+  const notes = [
+    `<p class="hint">${esc(txt('ui.logfile.summary', {
+      restarts: st.restart_pages, records: (st.records || 0).toLocaleString(),
+      pages: (st.log_pages || 0).toLocaleString(),
+      clean: yesno(newest.clean_shutdown), version: newest.version,
+      size: (rep.size || 0).toLocaleString() }))}</p>`,
+    `<p class="hint">${esc(txt('ui.logfile.caveat'))}</p>`,
+  ];
+  for (const f of rep.findings || []) {
+    notes.push(`<p class="notice bad">${esc(f)}</p>`);
+  }
+  const rows = (r.records || []).map(x => {
+    const ops = x.redo_name
+      ? `${esc(x.redo_name)} <small>(0x${x.redo_op.toString(16)})</small> / ${
+          esc(x.undo_name)} <small>(0x${x.undo_op.toString(16)})</small>`
+      : esc(x.type);
+    const tgt = x.redo_name
+      ? `attr ${x.target_attribute}, vcn ${x.target_vcn}${
+          (x.lcns || []).length ? ', lcn ' + x.lcns.join(',') : ''}`
+      : '—';
+    const names = (x.names || []).map(n => {
+      const t = n.times || {};
+      const tip = ['created', 'modified', 'mft_modified', 'accessed']
+        .map(k => `${k}: ${t[k] ? fmt.time(t[k]) : '—'}`).join('\n');
+      return `<span title="${esc(tip)}">${esc(n.name)}</span> <small>(${
+        esc(n.from)} ${esc(n.source)}${
+        n.file_reference != null ? ', file ' + n.file_reference : ''}, parent ${
+        n.parent_reference})</small>`;
+    }).join('<br>');
+    return `<tr>
+      <td class="dv">${x.lsn.toLocaleString()}</td>
+      <td class="dv">${x.transaction || '—'}</td>
+      <td class="dv">${ops}</td>
+      <td class="dv">${esc(tgt)}</td>
+      <td class="dv">${names || '—'}</td>
+      <td class="dv">${x.offset.toLocaleString()}</td>
+    </tr>`;
+  }).join('');
+  $('#art-results').innerHTML = `
+    ${notes.join('')}
+    <div class="runbar">
+      <input type="text" id="log-q" class="dv-filter"
+             placeholder="${esc(txt('ui.logfile.name_placeholder'))}" value="${esc(logQuery)}">
+      <select id="log-op">
+        <option value="">${txt('ui.logfile.every_operation')}</option>
+        ${(r.operations || []).map(x =>
+          `<option value="${esc(x)}"${x === logOp ? ' selected' : ''}>${esc(x)}</option>`
+        ).join('')}
+      </select>
+      <button class="ghost" id="log-prev"${logPage ? '' : ' disabled'}>${txt('ui.logfile.prev')}</button>
+      <span class="len">${esc(txt('ui.logfile.pager', {
+        page: (logPage + 1).toLocaleString(), pages: pages.toLocaleString(),
+        n: r.total.toLocaleString() }))}</span>
+      <button class="ghost" id="log-next"${
+        logPage + 1 >= pages ? ' disabled' : ''}>${txt('ui.logfile.next')}</button>
+    </div>
+    <table class="dv-list">
+      <thead><tr><th>${txt('ui.logfile.lsn')}</th><th>${txt('ui.logfile.transaction')}</th>
+        <th>${txt('ui.logfile.operation')}</th><th>${txt('ui.logfile.target')}</th>
+        <th>${txt('ui.logfile.name')}</th><th>${txt('ui.logfile.position')}</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  $('#log-prev').addEventListener('click', () => {
+    if (logPage) { logPage--; loadLogfile(part); }
+  });
+  $('#log-next').addEventListener('click', () => {
+    if (logPage + 1 < pages) { logPage++; loadLogfile(part); }
+  });
+  $('#log-op').addEventListener('change', e => {
+    logOp = e.target.value; logPage = 0; loadLogfile(part);
+  });
+  let t;
+  $('#log-q').addEventListener('input', e => {
+    clearTimeout(t);
+    const v = e.target.value;
+    t = setTimeout(() => { logQuery = v; logPage = 0; loadLogfile(part); }, 250);
   });
   initColumnResize();
 }

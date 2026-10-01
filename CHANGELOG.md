@@ -82,6 +82,17 @@ records, not how the code changed.
   folder they stand for, and are not opened as folders, so a link cannot make
   the tree loop. Tested on synthetic volumes; the layout was checked against
   an independent reader.
+- **The NTFS log (`$LogFile`) can be read.** A new artefact, "NTFS log",
+  shows the log's restart areas (whether the last shutdown was clean, log
+  version, size) and its log records: LSN, transaction, the redo and undo
+  operation (name and code), and the attribute they act on. Where a record
+  adds, deletes or updates a file name and its payload is a plain
+  `$FILE_NAME` that passes sanity checks, the name, the file it refers to and
+  its four timestamps are shown too. Everything is shown as recorded: the log
+  is a ring, so it is not a full history, and Strata does not infer a
+  sequence of events from it. Torn pages are skipped and counted. Built from
+  published third-party format descriptions and tested on synthetic logs
+  only; it has not been checked against a real `$LogFile`.
 
 ### Fixed
 
