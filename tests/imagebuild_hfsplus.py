@@ -224,8 +224,8 @@ def _fork_extents(size, extents, blocks):
     return struct.pack(">QII", size, 0, blocks) + ext.ljust(64, b"\x00")
 
 
-def _perms(flags, special):
-    return struct.pack(">IIBBHI", 501, 20, 0, flags, 0o100644, special)
+def _perms(flags, special, mode=0o100644):
+    return struct.pack(">IIBBHI", 501, 20, 0, flags, mode, special)
 
 
 def build(entries, block_size=4096, node_size=4096, name="TESTVOL",
@@ -311,14 +311,14 @@ def build(entries, block_size=4096, node_size=4096, name="TESTVOL",
         if isinstance(c, Dir):
             val = len(c.children)
             data = struct.pack(">HHIIIIIII", 1, 0, val, c.cnid, t, t, t, t, 0)
-            data += _perms(0, 0) + bytes(16) + bytes(16) + struct.pack(">II", 0, 0)
+            data += _perms(0, 0, 0o040755) + bytes(16) + bytes(16) + struct.pack(">II", 0, 0)
             cat.append((cat_sort(parent, c.name), cat_key(parent, c.name), data))
             thread = struct.pack(">HHI", 3, 0, parent) + uname(c.name)
             cat.append((cat_sort(c.cnid, ""), cat_key(c.cnid, ""), thread))
     # root folder record and thread
     rdata = struct.pack(">HHIIIIIII", 1, 0, len(root.children), 2, rec_time,
                         rec_time, rec_time, rec_time, 0)
-    rdata += _perms(0, 0) + bytes(16) + bytes(16) + struct.pack(">II", 0, 0)
+    rdata += _perms(0, 0, 0o040755) + bytes(16) + bytes(16) + struct.pack(">II", 0, 0)
     cat.append((cat_sort(1, root.name), cat_key(1, root.name), rdata))
     cat.append((cat_sort(2, ""), cat_key(2, ""),
                 struct.pack(">HHI", 3, 0, 1) + uname(root.name)))

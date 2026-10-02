@@ -1,0 +1,44 @@
+name: Cross-check
+
+# Reads the synthetic corpus with Strata and with independent readers (the
+# libyal libraries, qemu-img) and fails on any difference that
+# tests/crosscheck_baseline.json does not explain. See docs/CROSSCHECK.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "engine/**"
+      - "tests/crosscheck*"
+      - "tests/imagebuild_*.py"
+      - ".github/workflows/crosscheck.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crosscheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  crosscheck:
+    name: Against reference readers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install the reference readers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-utils
+          python3 -m pip install libewf-python libvhdi-python libqcow-python \
+            libvmdk-python libvsgpt-python libfsntfs-python libfshfs-python \
+            libfsext-python libfsfat-python
+      - name: List what is installed
+        run: python3 tests/crosscheck.py --list
+      - name: Compare
+        run: python3 tests/crosscheck.py --no-save

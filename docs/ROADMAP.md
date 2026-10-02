@@ -276,9 +276,10 @@ Agreeing with another tool is agreement, not verification.
 
 ## Open questions
 
-- **Independent validation.** None of the parsers has been validated against
-  reference tooling on shared evidence; a repeatable comparison against an
-  established tool is the candidate before any new filesystem.
+- **Independent validation.** `tests/crosscheck.py` now compares containers,
+  GPT and four filesystems against established readers on the synthetic
+  corpus (see `docs/CROSSCHECK.md`). Still open: running it over real images,
+  and references for encryption, artefacts, APFS and exFAT.
 - **Fuzz corpus growth.** The saved corpus is small; a standing fuzz job with
   coverage feedback would find the next #15 before a user does.
 
