@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from . import carve as carve_mod
+from .nodes import node_of
 from . import volmap as volmap_mod
 from . import nativedialog
 from . import attack as attack_mod
@@ -196,10 +197,7 @@ class FileRegion:
 
     def _key(self):
         e = self.entry
-        node = (e.get("oid") if e.get("oid") is not None else
-                e.get("mft") if e.get("mft") is not None else
-                e.get("inode") if e.get("inode") is not None else
-                e.get("start_cluster"))
+        node = node_of(e)
         return (id(self.fs), str(node),
                 e.get("path") or e.get("name") or "", self.stream)
 
@@ -595,8 +593,7 @@ class Session:
         return OffsetReader(ev.image, offset, size or (ev.image.size - offset))
 
     def hive(self, offset, entry, ev=None):
-        key = (offset, entry.get("mft") or entry.get("inode")
-               or entry.get("oid") or entry.get("start_cluster"), entry.get("name"))
+        key = (offset, node_of(entry), entry.get("name"))
         ev = ev or self.current
         if key in ev.hive_cache:
             return ev.hive_cache[key]
@@ -3677,7 +3674,7 @@ class Handler(BaseHTTPRequestHandler):
                         "name": e.get("name"), "path": e.get("path"),
                         "size": e.get("size"), "deleted": e.get("deleted"),
                         "mft": e.get("mft"), "inode": e.get("inode"),
-                        "oid": e.get("oid"),
+                        "oid": e.get("oid"), "cnid": e.get("cnid"),
                         "start_cluster": e.get("start_cluster")}
                     for m in r["messages"]:
                         m["store"] = e.get("path")
@@ -4590,6 +4587,14 @@ def _entry_from_body(fs, body):
     walking the FAT (#94)."""
     node = body.get("node")
     n = None if node in (None, "", "null") else int(node)
+    lookup = getattr(fs, "entry_by_node", None)
+    if lookup is not None and n is not None:
+        # A reader whose entries carry what is needed to read them (HFS+
+        # keeps a file's extents in its catalog record) is asked for the
+        # entry itself, rather than given a bare handle it cannot read.
+        found = lookup(n)
+        if found is not None:
+            return found
     entry = {"name": body.get("name"), "path": body.get("path"),
              "size": body.get("size"), "is_dir": False,
              "deleted": bool(body.get("deleted")),
@@ -4604,6 +4609,8 @@ def _entry_from_body(fs, body):
         entry["inode"] = n
     elif fsname.startswith("APFS") or fsname.startswith("LOGICAL"):
         entry["oid"] = n
+    elif fsname.startswith("HFS"):
+        entry["cnid"] = n
     else:
         entry["start_cluster"] = n
     return entry
@@ -4894,11 +4901,7 @@ def _resolve_path(fs, path):
             return hit
         if not hit.get("is_dir"):
             return None
-        node = (hit.get("mft") if hit.get("mft") is not None
-                else hit.get("inode") if hit.get("inode") is not None
-                else hit.get("oid") if hit.get("oid") is not None
-                else hit.get("cnid") if hit.get("cnid") is not None
-                else hit.get("start_cluster"))
+        node = node_of(hit)
         here = hit.get("path") or (here + "/" + want)
     return None
 

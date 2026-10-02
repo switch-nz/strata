@@ -11,16 +11,7 @@ _HEX = re.compile(r"\b([0-9a-fA-F]{32}|[0-9a-fA-F]{40}|[0-9a-fA-F]{64})\b")
 
 ALGO_BY_LEN = {32: "md5", 40: "sha1", 64: "sha256"}
 
-def node_of(entry):
-    for key in ("mft", "inode", "oid", "start_cluster"):
-        v = entry.get(key)
-        if v is not None:
-            return v
-    return None
-
-def node_key(entry):
-    v = node_of(entry)
-    return None if v is None else str(v)
+from .nodes import node_of, node_key  # noqa: F401  (re-exported)
 
 CHUNK = 4 << 20
 

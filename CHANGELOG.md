@@ -26,6 +26,14 @@ records, not how the code changed.
   pyewf (libewf's own reference Python bindings); a real Ex01 written by
   EnCase itself has not been checked. EWF2 logical evidence (Lx01: files
   and folders, not a disk image) is not read.
+- A repeatable comparison of Strata against independent readers
+  (`tests/crosscheck.py`; libewf, libvhdi, libqcow, libvmdk, libvsgpt,
+  libfsntfs, libfshfs, libfsext, libfsfat and qemu-img where installed). It
+  reads the same image both ways, layer by layer, and lists every difference;
+  the ones that are understood are recorded with their reasons and a new one
+  fails the run. It can also be pointed at real images, with file and folder
+  names withheld from its output. Synthetic images only so far; see
+  `docs/CROSSCHECK.md`.
 - **AFF4 disk images can be opened.** Both the single-stream and the more
   common Map-over-ImageStream shape are read, with zlib/Deflate-compressed
   or stored chunks; a gap in a Map (unallocated space) reads as zeros, a
@@ -57,6 +65,17 @@ records, not how the code changed.
 
 ### Fixed
 
+- **Opening a folder on an HFS+ volume showed the volume's top level again,
+  and search, hashing, indexing and tagging skipped HFS+ folders.** Each
+  reader names its entries by its own key (the MFT record for NTFS, the inode
+  for ext, the catalog node ID for HFS+), and most of the code looked for
+  every key but HFS+'s. Expanding a folder in the tree listed the volume root
+  instead of its contents (nested without end), a search, file-type check,
+  hash or index run never went below the top folder, and an HFS+ file had no
+  key to tag or hash it under. The key is now chosen in one place. A tagged
+  HFS+ file can also be exported, which it could not be before: it is looked
+  up again from its key. Checked in a browser on a synthetic HFS+ volume
+  built with nested folders; the volume itself is unchanged.
 - **A cut-off name in the evidence tree can be read in full.** The tree is
   narrow, so a long line such as a partition's "volume label ..." detail was
   shown with an ellipsis and the rest was unreachable. Hovering over a row now

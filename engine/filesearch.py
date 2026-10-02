@@ -1,6 +1,7 @@
 import re
 
 from . import profile
+from .nodes import node_of
 from .text import t as _t
 
 DEFAULT_SCAN_BYTES = 64 << 20
@@ -45,10 +46,7 @@ def _walk(fs, root_node, path, out, depth, max_depth, seen, progress=None,
         if progress is not None and len(out) % PROGRESS_EVERY == 1:
             progress(len(out))
         if e.get("is_dir"):
-            node = (e.get("mft") if e.get("mft") is not None
-                    else e.get("inode") if e.get("inode") is not None
-                    else e.get("oid") if e.get("oid") is not None
-                    else e.get("start_cluster"))
+            node = node_of(e)
             if node is None or node in seen:
                 continue
             seen.add(node)
@@ -325,7 +323,7 @@ def _hit(e, where, context, term=None, offset=None, encoding=None):
         "modified": e.get("modified"), "created": e.get("created"),
         "accessed": e.get("accessed"),
         "mft": e.get("mft"), "inode": e.get("inode"), "oid": e.get("oid"),
-        "start_cluster": e.get("start_cluster"),
+        "cnid": e.get("cnid"), "start_cluster": e.get("start_cluster"),
         "where": where, "term": term, "context": context,
         "file_offset": offset, "encoding": encoding,
         "entry": e,
