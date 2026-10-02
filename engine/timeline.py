@@ -45,11 +45,7 @@ def _parse(ts):
         return None
     return t if t.tzinfo else t.replace(tzinfo=_UTC)
 
-def _node_id(entry):
-    for key in ("mft", "inode", "oid", "cnid", "start_cluster"):
-        if entry.get(key) is not None:
-            return entry[key]
-    return None
+from .nodes import node_of as _node_id
 
 def root_of(fs):
     root = getattr(fs, "root_node", None)

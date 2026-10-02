@@ -224,7 +224,35 @@ class HfsPlus:
         self._by_parent, self._threads = by_parent, threads
         self._resolve_links(by_parent)
         self._resolve_compression(by_parent)
+        self._by_cnid = {rec["cnid"]: rec for recs in by_parent.values()
+                         for rec in recs}
         return by_parent, threads
+
+    def _path_of(self, cnid):
+        """The path of the file or folder with this catalog ID, built from
+        the parent links of its thread records; None if the chain is broken
+        or loops."""
+        _by_parent, threads = self._index()
+        parts, seen = [], set()
+        while cnid != CNID_ROOT_FOLDER:
+            if cnid in seen or cnid not in self._by_cnid:
+                return None
+            seen.add(cnid)
+            rec = self._by_cnid[cnid]
+            parts.append(rec["name"])
+            cnid = rec["parent"]
+        return "/" + "/".join(reversed(parts))
+
+    def entry_by_node(self, cnid):
+        """The entry listdir() would give for the file or folder with this
+        catalog ID, or None. For a caller that kept only the handle."""
+        self._index()
+        rec = self._by_cnid.get(int(cnid))
+        if rec is None:
+            return None
+        out = dict(rec)
+        out["path"] = self._path_of(rec["cnid"]) or "/" + rec["name"]
+        return out
 
     def _private_children(self, by_parent, name, prefix):
         """{number: record} of the entries in the private folder `name`

@@ -5,6 +5,7 @@ import unicodedata
 import zlib
 
 from . import filesearch
+from .nodes import node_of
 from . import entropy as entropy_mod
 from . import officedoc as officedoc_mod
 
@@ -464,10 +465,7 @@ def build(fs, case, part, root_node, progress=None, want_live_names=False,
             return
         if len(body) >= max_text:
             counts["text_capped"] += 1
-        node = (e.get("mft") if e.get("mft") is not None
-                else e.get("inode") if e.get("inode") is not None
-                else e.get("oid") if e.get("oid") is not None
-                else e.get("start_cluster"))
+        node = node_of(e)
         rows.append((e.get("name") or "", e.get("path") or "", body,
                      str(node), part, e.get("size") or 0,
                      int(bool(e.get("deleted"))), e.get("modified") or "",

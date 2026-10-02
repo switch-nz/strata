@@ -968,7 +968,7 @@ function marksHere() {
   if (!S.scope.file) return S.marks.filter(m => (m.frame || 'media') !== 'file');
   const e = S.scope.entry;
   if (!e) return [];
-  const node = String(e.oid ?? e.mft ?? e.inode ?? e.start_cluster ?? e.path ?? '');
+  const node = String(nodeValue(e) ?? e.path ?? '');
   const stream = S.scope.stream || null;
   return S.marks.filter(m => m.frame === 'file'
     && String(m.node ?? '') === node
@@ -1525,7 +1525,7 @@ async function listInto(holder, part, nodeId, depth, path, dirName) {
 
   const frag = document.createDocumentFragment();
   for (const e of r.entries) {
-    const childId = e.mft ?? e.inode ?? e.oid ?? e.start_cluster;
+    const childId = nodeValue(e);
     frag.appendChild(node({
       label: e.tree_label || e.name,
       meta: e.tree_label
@@ -2177,7 +2177,7 @@ async function exportEntry(e, part, dest = null, stream = '',
   }
   const r = await api.post('export/file', {
     part: partOffset(part), entry: e,
-    node: e.mft ?? e.inode ?? e.oid ?? e.start_cluster,
+    node: nodeValue(e),
     name: e.name, path: e.path, size: e.size, dest, stream,
     add_exhibit: addExhibit,
     snap: part && part.snap != null ? part.snap : undefined });
@@ -2578,7 +2578,16 @@ async function loadHashMap(part, force = false) {
   hashMap = { ev: S.activeId, part, map: (r && r.map) || {} };
 }
 
-const nodeOf = e => String(e.mft ?? e.inode ?? e.oid ?? e.start_cluster ?? '');
+// The handle a filesystem reader gives an entry: the MFT record (NTFS), inode
+// (ext), object ID (APFS, logical evidence), catalog node ID (HFS+) or first
+// cluster (FAT, exFAT). Kept in step with engine/nodes.py.
+const NODE_KEYS = ['mft', 'inode', 'oid', 'cnid', 'start_cluster'];
+function nodeValue(e) {
+  for (const k of NODE_KEYS) if (e[k] != null) return e[k];
+  return undefined;
+}
+
+const nodeOf = e => String(nodeValue(e) ?? '');
 
 const PAGE_ROWS = 400;
 
@@ -2744,7 +2753,7 @@ async function dirUp() {
 
 async function listAllBelow(part, e = null) {
   if (!await useOwner(part)) return;
-  const node = e ? (e.mft ?? e.inode ?? e.oid ?? e.start_cluster) : null;
+  const node = e ? nodeValue(e) : null;
   const root = e ? (e.path || '/') : '/';
   const label = e ? (e.name || root) : txt('ui.dir.at_root');
   const scopeName = txt('ui.dir.scope_below', { name: label });
@@ -3174,7 +3183,7 @@ async function previewEntry(e, part, from = null, stream = null) {
   if (e.is_dir) {
     pvSet(e.name || txt('ui.preview.preview_title'), '',
           `<p class="empty">${txt('messages.folder_has_a_listing_not_a_preview')}</p>`);
-    const nodeId = e.mft ?? e.inode ?? e.oid ?? e.start_cluster;
+    const nodeId = nodeValue(e);
     if (!dirCache.has(dirKey(part.offset, nodeId, part.ev_id,
                        part.snap))) {
       dirSet(e.name, 'reading…', `<p class="empty">${txt('ui.reading_directory')}</p>`);
@@ -4850,7 +4859,7 @@ $('#btn-attack-import')?.addEventListener('click', async () => {
   toast(txt('help.techniques_techniques_imported_attributions_already_made_unchanged', { techniques: r.techniques.toLocaleString() }));
 });
 
-const nodeIdOf = e => String(e.mft ?? e.inode ?? e.oid ?? e.start_cluster);
+const nodeIdOf = e => String(nodeValue(e));
 
 function tagsFor(entry) {
   const id = nodeIdOf(entry);
@@ -5197,7 +5206,7 @@ const profileKey = (part, scope = S.scope) => {
   const base = `${S.activeId ?? '?'}:${part ?? 'image'}`;
   if (!scope || !scope.file || !scope.entry) return base;
   const e = scope.entry;
-  const node = e.oid ?? e.mft ?? e.inode ?? e.start_cluster ?? e.path;
+  const node = nodeValue(e) ?? e.path;
   return `${base}:file:${node}${scope.stream ? ':' + scope.stream : ''}`;
 };
 let profileToken = null;
@@ -9117,7 +9126,7 @@ function markFrame() {
   return {
     frame: 'file',
     part: S.scope.part,
-    node: String(e.oid ?? e.mft ?? e.inode ?? e.start_cluster ?? e.path ?? ''),
+    node: String(nodeValue(e) ?? e.path ?? ''),
     stream: S.scope.stream || null,
     name: e.name || '',
   };
@@ -11039,8 +11048,7 @@ $('#dlg-tag').addEventListener('close', async () => {
     const a = await api.post('attack/tag', {
       part: +$('#dlg-tag').dataset.part,
       target_kind: 'file',
-      target_ref: String(entry.mft ?? entry.inode ?? entry.oid
-                         ?? entry.start_cluster ?? entry.path ?? entry.name),
+      target_ref: String(nodeValue(entry) ?? entry.path ?? entry.name),
       technique: tech, technique_name: t?.name, tactic: t?.tactic,
       note: $('#tag-note').value.trim(), asserted: true,
       catalogue: attackState.catalogue?.version,
