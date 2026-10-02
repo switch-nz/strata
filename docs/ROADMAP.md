@@ -27,9 +27,22 @@ before anything new.
 Roughly in order of how often an examiner meets them. Everything below is
 recognised and refused by name today; these entries are about *reading* it.
 
-- [ ] **Ex01 / Lx01** (EWF v2) — detected and refused. Same lineage as the
-      E01 already read, with a different header and compression framing.
-      Cheapest real win of the set.
+- [~] **Ex01** (EWF v2) — read: zlib-compressed, stored and pattern-fill
+      chunks, device/case metadata, MD5/SHA1 verification. Not the same
+      lineage as E01 in the way it first looked -- sections are read
+      back-to-front (each one's descriptor sits at its own end and points
+      to the previous section, not the next), and metadata is a different
+      text format. Built from libyal's EWF2 specification and
+      cross-checked line-for-line against libewf's own C source for the
+      one detail the prose doesn't pin down; the resulting reader was also
+      verified against pyewf (libewf's reference Python bindings), which
+      reads this project's synthetic test files identically. Encrypted
+      volumes and bzip2-compressed chunks are refused -- EnCase 7 has never
+      exposed bzip2 as an option, and Ex01 encryption is undisclosed by
+      Guidance Software. Tested on synthetic images only; a real Ex01 from
+      EnCase itself still needs checking. Lx01 (logical evidence: files and
+      folders, not a disk image) is a different, adjacent format and is
+      not read.
 - [~] **Split raw sets** (`.001`, `.0000`, `.aa`, …) — the set shapes real
       acquisition tools write are joined into one exhibit: FTK Imager's
       three-digit `.001`, Guymager's zero-based numbering at whatever width

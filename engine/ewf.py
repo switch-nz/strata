@@ -13,6 +13,7 @@ from . import vdi as vdi_mod
 from . import qcow2 as qcow2_mod
 from . import dmg as dmg_mod
 from . import aff4 as aff4_mod
+from . import ewf2 as ewf2_mod
 from .inflate import DAMAGED, STOPPED, inflate_capped, inflate_ended
 import zlib
 from collections import OrderedDict
@@ -71,11 +72,16 @@ def _has_ewf_signature(path):
 
 def discover_segments(path):
     base, ext = os.path.splitext(path)
-    if len(ext) != 4:
-        return [path]
-    stem = ext[1]
     directory = os.path.dirname(os.path.abspath(path)) or "."
     prefix = os.path.basename(base)
+    if len(ext) == 4:
+        return _discover_segments_v1(path, ext, directory, prefix)
+    if len(ext) == 5 and ext[3:5].isdigit():
+        return _discover_segments_v2(path, ext, directory, prefix)
+    return [path]
+
+def _discover_segments_v1(path, ext, directory, prefix):
+    stem = ext[1]
     pattern = re.compile(
         r"^" + re.escape(prefix) + r"\.(" + re.escape(stem) + r"[0-9]{2}|"
         + re.escape(stem.upper()) + r"[A-Z]{2}|[A-Z]{3})$",
@@ -101,6 +107,38 @@ def discover_segments(path):
         if e[1:].isdigit():
             return (0, int(e[1:]))
         return (1, e)
+
+    return sorted(found, key=order) if found else [path]
+
+def _discover_segments_v2(path, ext, directory, prefix):
+    """EWF2-Ex01/Lx01 segment naming ([ENCASE12] via libewf's EWF2
+    documentation): .Ex01 .. .Ex99, then .ExAA .. .ExZZ, then .EyAA ..
+    .EzZZ. The documentation itself flags the exact continuation past
+    .EzZZ as unverified ("verify this; and then?"), so -- like EWF1's own
+    fallback above -- a lettered extension only counts once .[type][x]99
+    exists, and only when it carries the EWF signature."""
+    type_letter = ext[1]      # "E" (Ex01) or "L" (Lx01)
+    pattern = re.compile(
+        r"^" + re.escape(prefix) + r"\." + re.escape(type_letter)
+        + r"[a-z]([0-9]{2}|[A-Z]{2})$", re.IGNORECASE)
+    found = []
+    for name in os.listdir(directory):
+        if pattern.match(name):
+            found.append(os.path.join(directory, name))
+
+    numbered = [p for p in found if os.path.splitext(p)[1][3:].isdigit()]
+    if any(os.path.splitext(p)[1][3:] == "99" for p in numbered):
+        found = numbered + [p for p in found
+                            if p not in numbered and _has_ewf_signature(p)]
+    else:
+        found = numbered
+
+    def order(p):
+        e = os.path.splitext(p)[1]         # e.g. ".Ex01" or ".ExAA"
+        series, rest = e[2].lower(), e[3:]
+        if rest.isdigit():
+            return (series, 0, int(rest))
+        return (series, 1, rest.upper())
 
     return sorted(found, key=order) if found else [path]
 
@@ -175,10 +213,6 @@ class EwfImage:
         for seg_index, seg_path in enumerate(self.segment_paths):
             fh = self._fh(seg_index)
             sig = fh.read(8)
-            if sig == EVF2_SIG:
-                raise EwfError(
-                    _t("ewf.ewf_v2_ex01_detected")
-                )
             if sig not in (EVF_SIG, LVF_SIG):
                 raise EwfError(_t("ewf.ewf_segment_file") % seg_path)
             fh.read(5)
@@ -810,8 +844,14 @@ def open_image(path):
             return _open_owning(path, os.fdopen(os.dup(fh.fileno()), "rb"),
                                 head, tail)
     sig = head[:8]
-    if sig in (EVF_SIG, LVF_SIG) or sig == EVF2_SIG:
+    if sig in (EVF_SIG, LVF_SIG):
         return EwfImage(path)
+    if sig == EVF2_SIG:
+        try:
+            return ewf2_mod.Ewf2Image(path)
+        except ewf2_mod.Ewf2Error as exc:
+            raise UnsupportedContainer(_t("ewf.ewf2_ex01") % exc.message,
+                                       exc.advice)
     if vmdk_mod.looks_like_vmdk(head):
         try:
             return vmdk_mod.VmdkImage(path)

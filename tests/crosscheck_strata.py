@@ -16,7 +16,7 @@ from engine.fs.ntfs import open_fs                            # noqa: E402
 
 # The class name of the image object Strata made -> the format it read.
 FORMATS = {
-    "EwfImage": "ewf", "RawImage": "raw", "VhdImage": "vhd",
+    "EwfImage": "ewf", "Ewf2Image": "ewf", "RawImage": "raw", "VhdImage": "vhd",
     "VhdxImage": "vhdx", "VmdkImage": "vmdk", "Qcow2Image": "qcow2",
     "VdiImage": "vdi", "DmgImage": "dmg", "Aff4Image": "aff4",
     "Ad1Image": "ad1", "RaidImage": "raid", "LogicalImage": "logical",

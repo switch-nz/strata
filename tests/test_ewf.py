@@ -270,8 +270,12 @@ class Robustness(TempDir):
         with self.assertRaises(ewf.EwfError):
             ewf.EwfImage(self.write("n.E01", b"hello world" * 100))
 
-    def test_ewf2_is_refused(self):
-        with self.assertRaises(ewf.EwfError):
+    def test_malformed_ewf2_is_refused(self):
+        # EWF2 is now read (engine/ewf2.py); a signature with no valid
+        # section structure behind it still fails to open, as
+        # UnsupportedContainer -- the same exception shape every other
+        # recognised-but-unreadable container uses.
+        with self.assertRaises(ewf.UnsupportedContainer):
             ewf.open_image(self.write("v2.Ex01", ewf.EVF2_SIG + bytes(100)))
 
     def test_known_unsupported_container(self):

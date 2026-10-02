@@ -13,6 +13,19 @@ records, not how the code changed.
 
 ### Added
 
+- **EWF2 (Ex01) images, as written by EnCase 7 and later, can be opened.**
+  Previously detected and refused outright. Zlib-compressed, stored and
+  pattern-fill (sparse) chunks are read, along with device and case
+  metadata and MD5/SHA1 verification. This is not simply E01 with wider
+  fields: EWF2 sections are read back-to-front (each one's descriptor sits
+  at its own end and points to the previous section, not the next), and
+  metadata uses a different text format. An encrypted volume, or one with
+  bzip2-compressed chunks, is refused with the reason — EnCase 7 has never
+  offered bzip2 as an option, and Ex01 encryption is undisclosed by
+  Guidance Software. Tested on synthetic images, cross-checked against
+  pyewf (libewf's own reference Python bindings); a real Ex01 written by
+  EnCase itself has not been checked. EWF2 logical evidence (Lx01: files
+  and folders, not a disk image) is not read.
 - A repeatable comparison of Strata against independent readers
   (`tests/crosscheck.py`; libewf, libvhdi, libqcow, libvmdk, libvsgpt,
   libfsntfs, libfshfs, libfsext, libfsfat and qemu-img where installed). It

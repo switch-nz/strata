@@ -120,6 +120,15 @@ def _vdi():
         5 * 4096, {0: bytes(range(256)) * 16, 2: b"\xA5" * 4096}, zero=(3,)))
 
 
+def _ewf2():
+    import hashlib
+    import imagebuild_ewf
+    import imagebuild_ewf2
+    data = imagebuild_ewf.media()
+    return imagebuild_ewf2.build_ex01(
+        data, md5=hashlib.md5(data).digest(), sha1=hashlib.sha1(data).digest())
+
+
 def _dmg():
     import imagebuild_dmg
     rng = random.Random(1)
@@ -148,6 +157,7 @@ def synthetic():
         Case("hfsplus.fragmented", ".img", _hfs_fragmented),
         Case("hfsplus.gpt", ".img", _gpt_hfs),
         Case("ewf", ".E01", lambda: _first(imagebuild_ewf.build_e01())),
+        Case("ewf2", ".Ex01", _ewf2),
         Case("vhd.dynamic", ".vhd", _vhd_dynamic),
         Case("qcow2.v2", ".qcow2", _qcow2(2, False)),
         Case("qcow2.v3.compressed", ".qcow2", _qcow2(3, True)),
