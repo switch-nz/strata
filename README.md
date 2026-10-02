@@ -19,7 +19,7 @@ is a synthetic volume: every byte of it was generated for this screenshot.*
 
 | Format | Notes |
 |---|---|
-| EWF | `.E01` and `.L01`, including split segment sets |
+| EWF | `.E01` and `.L01` (v1), and `.Ex01` (v2, EnCase 7+), including split segment sets; `.Lx01` (v2 logical evidence) is not read |
 | Raw / dd | single-file images and split sets (`.001`, `.002`, …) |
 | VMDK | flat, sparse, and stream-optimized |
 | VHDX | fixed and dynamic; a differencing disk is detected and reported, not merged |
@@ -163,8 +163,8 @@ separate from the tool's suggestions, and never promotes one to the other.
 
 ## Not implemented
 
-EWF v2 (Ex01), FileVault, reconstructing events from `$LogFile`, and carving
-across fragments.
+EWF v2 logical evidence (Lx01), FileVault, reconstructing events from
+`$LogFile`, and carving across fragments.
 
 ---
 
