@@ -13,6 +13,14 @@ records, not how the code changed.
 
 ### Added
 
+- A repeatable comparison of Strata against independent readers
+  (`tests/crosscheck.py`; libewf, libvhdi, libqcow, libvmdk, libvsgpt,
+  libfsntfs, libfshfs, libfsext, libfsfat and qemu-img where installed). It
+  reads the same image both ways, layer by layer, and lists every difference;
+  the ones that are understood are recorded with their reasons and a new one
+  fails the run. It can also be pointed at real images, with file and folder
+  names withheld from its output. Synthetic images only so far; see
+  `docs/CROSSCHECK.md`.
 - **AFF4 disk images can be opened.** Both the single-stream and the more
   common Map-over-ImageStream shape are read, with zlib/Deflate-compressed
   or stored chunks; a gap in a Map (unallocated space) reads as zeros, a

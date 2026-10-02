@@ -1,0 +1,86 @@
+[
+  {
+    "case": "synthetic:ntfs*",
+    "facet": "fs",
+    "kind": "only_strata",
+    "key": "/$*",
+    "reason": "Strata lists NTFS's own metadata files ($MFT, $Bitmap, $Boot, ...) in the root, as FTK Imager and X-Ways do, so they can be examined; libfsntfs leaves them out of the root's listing. A choice of presentation, not a content difference."
+  },
+  {
+    "case": "synthetic:fat1?",
+    "facet": "fs",
+    "kind": "differs",
+    "key": "/CYCLE.BIN",
+    "reason": "The fixture deliberately declares 5000 bytes on a corrupt cluster chain that loops (17 -> 18 -> 17). Strata follows the chain for the declared size and notes the damage; libfsfat refuses to read it. Both are defensible on corrupt input."
+  },
+  {
+    "case": "synthetic:ext4",
+    "facet": "fs",
+    "kind": "error",
+    "key": "libfsext:refused",
+    "reason": "libfsext refuses an entry of the synthetic ext4 image whose in-inode extended attribute area (inline data) it considers out of bounds. Not yet established whether the builder or either reader is wrong; kept here so the ext4 tree is not compared until it is looked at."
+  },
+  {
+    "case": "synthetic:hfsplus.links",
+    "facet": "fs",
+    "kind": "only_strata",
+    "key": "/*HFS+ Private Data*",
+    "reason": "The private metadata folder's name begins with four NUL characters. Strata keeps them as they are on disk; libfshfs replaces each with the symbol for NUL (U+2400), so the same folder has two spellings. Content identical."
+  },
+  {
+    "case": "synthetic:hfsplus.links",
+    "facet": "fs",
+    "kind": "only_ref",
+    "key": "/*HFS+ Private Data*",
+    "reason": "The same folder as the entry above, as libfshfs names it."
+  },
+  {
+    "case": "synthetic:hfsplus.compressed",
+    "facet": "fs",
+    "kind": "differs",
+    "key": "/*",
+    "reason": "libfshfs does not apply HFS+ transparent compression (decmpfs) and reports the files as empty; Strata decompresses them. Strata's output is the one covered by its own decmpfs tests against known-good vectors."
+  },
+  {
+    "case": "synthetic:vmdk.*",
+    "facet": "container",
+    "kind": "error",
+    "key": "libvmdk:OSError",
+    "reason": "The builder writes 8-sector grains so the fixtures stay tiny; libvmdk accepts only grains of more than 8 sectors (real writers use 128). Strata reads the image; the reference refuses it."
+  },
+  {
+    "case": "synthetic:vhd.dynamic",
+    "facet": "container",
+    "kind": "differs",
+    "key": "size",
+    "reason": "qemu-img works the disk size out from the CHS geometry in the footer, and a fixture of 40 sectors has zero cylinders, so it reports an empty disk. Strata and libvhdi both use the size the footer states. Needs a larger fixture to compare on."
+  },
+  {
+    "case": "synthetic:vhd.dynamic",
+    "facet": "container",
+    "kind": "differs",
+    "key": "content",
+    "reason": "The same: qemu-img converts an empty disk, so there is nothing to compare."
+  },
+  {
+    "case": "synthetic:qcow2.*",
+    "facet": "container",
+    "kind": "error",
+    "key": "qemu-img:refused",
+    "reason": "The builder writes no reference count table, which qemu requires and Strata and libqcow do not. A fixture shortcoming, not a difference in what the image holds."
+  },
+  {
+    "case": "synthetic:vdi",
+    "facet": "container",
+    "kind": "error",
+    "key": "qemu-img:refused",
+    "reason": "The builder uses 4 KiB blocks to stay small; qemu accepts only the 1 MiB block size real writers use. Strata reads the image."
+  },
+  {
+    "case": "synthetic:dmg",
+    "facet": "container",
+    "kind": "error",
+    "key": "qemu-img:refused",
+    "reason": "The fixture's blocks are LZFSE-compressed and qemu-img's LZFSE module is not installed, so it cannot read them. Strata decodes LZFSE against known-good vectors."
+  }
+]

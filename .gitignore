@@ -45,3 +45,6 @@ desktop.ini
 # Native sidecar build output and locally installed test binaries
 native/target/
 engine/native/*/
+
+# Output of tests/crosscheck.py; may describe real evidence.
+/crosscheck-out/

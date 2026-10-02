@@ -376,7 +376,7 @@ def build_ntfs():
         0x80, [(BITMAP_LCN, 1)], (TOTAL_CLUSTERS + 7) // 8)])
     sysfile(7, "$Boot", [nonresident_attr(0x80, [(0, 1)], CLUSTER)])
     sysfile(8, "$BadClus", [resident_attr(0x80, b"")])
-    sysfile(9, "$Secure", [])
+    sysfile(9, "$Secure", [resident_attr(0x80, b"", name="$SDS")])
     sysfile(10, "$UpCase", [resident_attr(0x80, b"")])
     sysfile(11, "$Extend", [], is_dir=True)
     for n in range(12, 16):
