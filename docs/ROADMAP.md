@@ -60,10 +60,19 @@ recognised and refused by name today; these entries are about *reading* it.
       images written by Apple's tools still need checking. Encrypted,
       segmented and sparse images, and images with ADC chunks, are refused
       with a reason; reading a sparse bundle (a folder) is not done.
-- [ ] **AFF / AFF4** — AFF4 is ZIP-based and is
-      deliberately not matched by signature, since refusing every ordinary
-      archive to catch one image format would be wrong far more often than
-      right.
+- [~] **AFF4** — a Map over one or more ImageStreams, or a bare ImageStream,
+      is read; zlib/Deflate-compressed or stored chunks, a damaged chunk or
+      bevy index reading as zeros and reported rather than failing the
+      image. Deliberately not matched by signature (it is ZIP-based; the
+      interior AFF4 markers are checked instead), since refusing every
+      ordinary archive to catch one image format would be wrong far more
+      often than right. A striped or segmented multi-volume set, and any
+      compression method other than Deflate, are refused. The published AFF4
+      Standard's own prose does not match real files in two places (the
+      ImageStream bevy index layout, and the Deflate method's URI); read
+      against bytes observed in real pyaff4 output instead. Tested on
+      synthetic images only; a real AFF4 imaging tool's output still needs
+      checking. The older AFF (not AFF4) format is not read.
 - [~] **RAID** reassembly (0 / 1 / 5) from member images. An "Assemble RAID
       set" dialog takes the level, chunk size, RAID 5 layout (Linux md's four),
       the members in slot order and each member's data offset; the definition

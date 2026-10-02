@@ -13,6 +13,19 @@ records, not how the code changed.
 
 ### Added
 
+- **AFF4 disk images can be opened.** Both the single-stream and the more
+  common Map-over-ImageStream shape are read, with zlib/Deflate-compressed
+  or stored chunks; a gap in a Map (unallocated space) reads as zeros, a
+  custom symbolic fill stream, or whatever `aff4:mapGapDefaultStream`
+  names. A damaged chunk or bevy index reads as zeros and is reported,
+  rather than failing the whole image. A striped or segmented multi-volume
+  AFF4 set, and chunks compressed with anything other than Deflate, are
+  refused with the reason. None of the byte-level format is documented by
+  the published AFF4 Standard with full accuracy -- two details (the
+  ImageStream bevy index layout, and the Deflate compression method's own
+  URI) were corrected against bytes observed in real files written by
+  pyaff4, the reference implementation. Tested on synthetic images only;
+  images written by a real AFF4 imaging tool have not been checked.
 - **LZFSE-compressed files are read on HFS+ and APFS.** Files macOS
   compresses with LZFSE (the method newer macOS versions prefer) were listed
   with a note and a volume finding but their content was not shown. They are

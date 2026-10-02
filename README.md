@@ -29,6 +29,7 @@ is a synthetic volume: every byte of it was generated for this screenshot.*
 | QCOW2 | versions 2 and 3, including compressed clusters; an encrypted disk, or one with a backing file, external data file, subcluster tables or non-zlib compression, is refused |
 | RAID 0 / 1 / 5 | assembled from member images (raw, E01 and the other image formats): the examiner gives the level, chunk size, RAID 5 layout, member order and data offsets; RAID 5 can be read with one member missing, and mirrors and parity are compared and reported as observed |
 | AD1 | AccessData logical images |
+| AFF4 | a Map over one or more ImageStreams, or a bare ImageStream, zlib/Deflate-compressed or stored; a striped or segmented multi-volume set, or any other compression method, is refused |
 
 **Logical evidence** — a folder, a zip, or a single file opened as an exhibit
 in its own right.
