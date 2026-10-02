@@ -1,5 +1,7 @@
 import struct
 
+from .nodes import node_of
+
 SIGNATURES = [
     (0, b"\xFF\xD8\xFF", "jpeg"),
     (0, b"\x89PNG\r\n\x1a\n", "png"),
@@ -280,10 +282,7 @@ def scan(fs, entries, read=None, progress=None, limit=None):
                 "name": e.get("name"), "path": e.get("path"),
                 "size": size, "deleted": bool(e.get("deleted")),
                 "modified": e.get("modified"),
-                "node": (e.get("mft") if e.get("mft") is not None
-                         else e.get("inode") if e.get("inode") is not None
-                         else e.get("oid") if e.get("oid") is not None
-                         else e.get("start_cluster")),
+                "node": node_of(e),
                 **{k: got[k] for k in ("extension", "extension_says",
                                        "detected", "content_is", "why",
                                        "severity")},

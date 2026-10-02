@@ -1,8 +1,4 @@
-def _node_of(e):
-    return (e.get("mft") if e.get("mft") is not None
-            else e.get("inode") if e.get("inode") is not None
-            else e.get("oid") if e.get("oid") is not None
-            else e.get("start_cluster"))
+from .nodes import node_of as _node_of
 
 def _safe_listdir(fs, node, path):
     try:

@@ -14,6 +14,7 @@ from . import casepref
 from . import fuzzyhash
 from . import version as version_mod
 from .text import t as _t
+from .nodes import node_of
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -1633,10 +1634,7 @@ class Case:
 
     @_writes
     def tag_item(self, evidence_id, item, tag, note="", part=0):
-        node = str(item.get("mft") if item.get("mft") is not None
-                   else item.get("inode") if item.get("inode") is not None
-                   else item.get("oid") if item.get("oid") is not None
-                   else item.get("start_cluster"))
+        node = str(node_of(item))
         cur = self.db.execute(
             "INSERT INTO tagged_items (evidence_id,part,node,path,name,size,"
             "is_dir,deleted,tag,note,created_at,examiner,modified,accessed,"
@@ -1782,10 +1780,7 @@ class Case:
             "deleted,where_found,term,context,file_offset,encoding,modified) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [(sid, h.get("name"), h.get("path"),
-              str(h.get("mft") if h.get("mft") is not None
-                  else h.get("inode") if h.get("inode") is not None
-                  else h.get("oid") if h.get("oid") is not None
-                  else h.get("start_cluster")),
+              str(node_of(h)),
               h.get("size"), int(bool(h.get("is_dir"))),
               int(bool(h.get("deleted"))), h.get("where"), h.get("term"),
               h.get("context"), h.get("file_offset"), h.get("encoding"),
