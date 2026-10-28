@@ -213,7 +213,7 @@ if __name__ == "__main__":
 
 
 class KeptKey(unittest.TestCase):
-    """A volume unlocked once comes back unlocked from the key the case kept."""
+    """Exported volume keys restore a vault; the case never keeps them."""
 
     @classmethod
     def setUpClass(cls):
@@ -236,15 +236,31 @@ class KeptKey(unittest.TestCase):
         self.assertFalse(v.restore_key(b"\x01" * 32))
         self.assertFalse(v.unlocked)
 
-    def test_the_case_keeps_and_forgets_the_key(self):
+    def test_the_case_never_keeps_a_volume_key(self):
         import shutil
         import tempfile
         from engine.casedb import Case
         d = tempfile.mkdtemp(prefix="strata-key-test-")
         self.addCleanup(lambda: shutil.rmtree(d, ignore_errors=True))
-        c = Case(os.path.join(d, "case"), name="t", examiner="A")
+        path = os.path.join(d, "case")
+        first = self.vault()
+        self.assertTrue(first.unlock(build.PASSWORD, kind="password")["unlocked"])
+        key = first.export_key()
+        c = Case(path, name="t", examiner="A")
+        # A case written by an older version carries the key.
+        c.db.execute("CREATE TABLE volume_keys (evidence_id INTEGER, "
+                     "part INTEGER, kind TEXT, key BLOB, saved_at TEXT)")
+        c.db.execute("INSERT INTO volume_keys VALUES (1, 2048, 'bitlocker', "
+                     "?, '')", (key,))
+        c.db.commit()
+        c.close()
+        c = Case(path, name="t", examiner="A")
         self.addCleanup(c.close)
-        c.save_volume_key(1, 2048, "bitlocker", b"k" * 32)
-        self.assertEqual(c.volume_key(1, 2048), ("bitlocker", b"k" * 32))
-        c.forget_volume_key(1, 2048)
-        self.assertIsNone(c.volume_key(1, 2048))
+        tables = [r[0] for r in c.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")]
+        self.assertNotIn("volume_keys", tables)
+        c.close()
+        for name in os.listdir(path):
+            if os.path.isfile(os.path.join(path, name)):
+                with open(os.path.join(path, name), "rb") as f:
+                    self.assertNotIn(key, f.read(), name)

@@ -296,18 +296,6 @@ CREATE TABLE IF NOT EXISTS type_mismatches (
 
 CREATE INDEX IF NOT EXISTS idx_tm ON type_mismatches(evidence_id, part);
 
--- The key a volume was unlocked with (BitLocker's FVEK, LUKS's master key),
--- kept so reopening the case finds the volume as it was left. It is the
--- decryption key itself, so the case file holds it: anyone who can read the
--- case can read the volume. Dropped when the volume is locked on purpose or
--- the evidence is removed.
-CREATE TABLE IF NOT EXISTS volume_keys (
-    evidence_id INTEGER NOT NULL,
-    part INTEGER NOT NULL,
-    kind TEXT NOT NULL,
-    key BLOB NOT NULL,
-    saved_at TEXT NOT NULL,
-    PRIMARY KEY (evidence_id, part));
 CREATE INDEX IF NOT EXISTS idx_bm_ev ON bookmarks(evidence_id, offset);
 CREATE INDEX IF NOT EXISTS idx_tag_ev ON tagged_items(evidence_id, tag);
 CREATE INDEX IF NOT EXISTS idx_hits ON search_hits(search_id);
@@ -561,6 +549,17 @@ class Case:
                                   timeout=30.0)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        # Older cases kept unlocked volume keys here. A key decrypts the
+        # volume, so it is never stored in the case; drop what is left.
+        # secure_delete zeroes the freed pages and VACUUM rewrites the file,
+        # so the key bytes do not survive in free pages or the journal.
+        if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table'"
+                           " AND name='volume_keys'").fetchone():
+            self.db.execute("PRAGMA secure_delete=ON")
+            self.db.execute("DROP TABLE volume_keys")
+            self.db.commit()
+            self.db.execute("VACUUM")
+            self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self._migrate_bookmarks()
         self._migrate_file_hashes()
         self._migrate_fuzzy_hash()
@@ -1079,30 +1078,7 @@ class Case:
 
     EVIDENCE_TABLES = ("bookmarks", "tagged_items", "saved_searches",
                        "file_hashes", "artefacts", "attack_tags",
-                       "type_mismatches", "volume_keys")
-
-    @_writes
-    def save_volume_key(self, evidence_id, part, kind, key):
-        self.db.execute(
-            "INSERT OR REPLACE INTO volume_keys VALUES (?,?,?,?,?)",
-            (evidence_id, part, kind, bytes(key), utcnow()))
-        self.db.commit()
-
-    def volume_key(self, evidence_id, part):
-        try:
-            row = self.db.execute(
-                "SELECT kind, key FROM volume_keys "
-                "WHERE evidence_id=? AND part=?", (evidence_id, part)).fetchone()
-        except sqlite3.Error:
-            return None
-        return (row["kind"], bytes(row["key"])) if row else None
-
-    @_writes
-    def forget_volume_key(self, evidence_id, part):
-        self.db.execute(
-            "DELETE FROM volume_keys WHERE evidence_id=? AND part=?",
-            (evidence_id, part))
-        self.db.commit()
+                       "type_mismatches")
 
     def evidence_holdings(self, evidence_id):
         out = {}

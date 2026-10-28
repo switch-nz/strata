@@ -795,34 +795,10 @@ class Session:
         v = (REGISTRY.shared("vault", ev.path, offset, build)
              if REGISTRY is not None else build())
         ev.vault_cache[offset] = v
-        if v is not None and not getattr(v, "unlocked", False):
-            self._restore_unlock(offset, v, ev)
         if v is not None and getattr(v, "unlocked", False):
             ev.unlocked[offset] = v
             self._note_unlock(offset, v, ev)
         return v
-
-    def _restore_unlock(self, offset, vault, ev):
-        """A volume unlocked in an earlier session comes back unlocked: the
-        case kept the key, so nothing has to be entered again."""
-        if self.case is None or getattr(ev, "evidence_id", None) is None:
-            return
-        kept = self.case.volume_key(ev.evidence_id, offset)
-        if kept is None:
-            return
-        try:
-            if not vault.restore_key(kept[1]):
-                return
-        except Exception:
-            return
-        seen = getattr(ev, "unlock_noted", None)
-        if seen is None:
-            seen = ev.unlock_noted = set()
-        seen.add(offset)
-        try:
-            self.case.log("volume.unlock.restored", {"part": offset})
-        except Exception:
-            pass
 
     def _note_unlock(self, offset, vault, ev):
         if self.case is None:
@@ -4003,14 +3979,6 @@ class Handler(BaseHTTPRequestHandler):
                     if REGISTRY is not None and s.current is not None:
                         REGISTRY.drop_shared("fs", s.current.path, part)
                     s._structures = None
-                    try:
-                        key = v.export_key()
-                        if key and s.current is not None:
-                            s.case.save_volume_key(
-                                s.current.evidence_id, part,
-                                "bitlocker" if is_bde else "luks", key)
-                    except Exception:
-                        pass
                     s.case.log("volume.unlock", {
                         "part": part, "method": r.get("protector")
                         or ("key slot %s" % r.get("slot")),
@@ -4078,7 +4046,6 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/lock":
             part = int(body.get("part") or 0)
             if s.current is not None:
-                s.case.forget_volume_key(s.current.evidence_id, part)
                 if REGISTRY is not None:
                     REGISTRY.drop_shared("vault", s.current.path, part)
             s.unlocked.pop(part, None)
