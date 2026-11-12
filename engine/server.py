@@ -153,6 +153,14 @@ def origin_allowed(origin, host_header):
         return False
     return _split_host(authority)[0] == _split_host(host_header)[0]
 
+# The interface's own pages. Everything it runs is its own files: no inline
+# script and no inline handlers, so evidence text that reaches the page
+# unescaped cannot execute. Styles are set inline by the interface itself.
+CSP_APP = ("default-src 'self'; script-src 'self'; "
+           "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+           "media-src 'self'; frame-src 'self'; object-src 'none'; "
+           "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+
 def _within(root, candidate):
     try:
         root = os.path.abspath(root)
@@ -1093,6 +1101,7 @@ class Handler(BaseHTTPRequestHandler):
             self._cookie_header()
             self.send_header("ETag", etag)
             self.send_header("Cache-Control", "no-cache")
+            self.send_header("Content-Security-Policy", CSP_APP)
             self.end_headers()
             return
 
@@ -1102,6 +1111,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-cache")
         self.send_header("ETag", etag)
+        self.send_header("Content-Security-Policy", CSP_APP)
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(data)
 
