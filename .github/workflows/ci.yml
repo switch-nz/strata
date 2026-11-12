@@ -49,7 +49,8 @@ jobs:
 
   smoke:
     name: Smoke test (${{ matrix.os }}, Python ${{ matrix.python }})
-    runs-on: ${{ matrix.os }}
+    # ubuntu-latest (26.04) has no Python 3.8 or 3.9 builds; 24.04 still does.
+    runs-on: ${{ (matrix.os == 'ubuntu-latest' && (matrix.python == '3.8' || matrix.python == '3.9')) && 'ubuntu-24.04' || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -69,7 +70,8 @@ jobs:
 
   unittest:
     name: Unit tests (Python ${{ matrix.python }})
-    runs-on: ubuntu-latest
+    # As above: 3.8 needs the older runner.
+    runs-on: ${{ matrix.python == '3.8' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
