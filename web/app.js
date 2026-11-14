@@ -4095,7 +4095,7 @@ async function openEventLog(entry, part, offset = 0) {
   const rows = recs.map((x, i) => `
     <tr data-i="${i}" class="${x.unsupported ? 'is-del' : ''}">
       <td class="dt">${esc((x.written_at || '').replace('T', ' ').slice(0, 19))}</td>
-      <td class="sz">${x.event_id ?? '—'}</td>
+      <td class="sz">${esc(x.event_id ?? '—')}</td>
       <td class="nm">${esc(x.level || '')}</td>
       <td class="nm">${esc(x.provider || '')}</td>
       <td class="nm">${esc(x.description || '')}</td>
@@ -4144,7 +4144,7 @@ async function openEventLog(entry, part, offset = 0) {
       const x = recs[+el.dataset.i];
       const f = x.fields || {};
       $('#evtx-detail').innerHTML = `
-        <div class="reg-meta">Record ${x.record_id} · ${
+        <div class="reg-meta">Record ${esc(x.record_id)} · ${
           esc(fmt.time(x.written_at))}${x.computer
             ? ' · ' + esc(x.computer) : ''}</div>
         ${x.description ? `<div class="reg-meta">${esc(x.description)}</div>` : ''}
@@ -9760,7 +9760,7 @@ async function browse(path, { into = '#browser', target = '#open-path',
   onDir?.(r.path);
   $(into).dataset.at = r.path;
   $(into).innerHTML = `
-    <div class="item dir" data-path="${r.parent}" data-dir="1">.. </div>
+    <div class="item dir" data-path="${esc(r.parent)}" data-dir="1">.. </div>
     ${r.items.map(i => `<div class="item ${i.dir ? 'dir' : ''}${
          i.case ? ' is-case' : ''}"
        data-path="${esc(i.path)}" data-dir="${i.dir ? 1 : 0}">
@@ -11262,13 +11262,13 @@ $('#btn-audit').addEventListener('click', async () => {
   const r = await api.get('audit');
   $('#audit-state').innerHTML = r.integrity.intact
     ? txt('messages.hash_chain_intact_across_all_entries')
-    : `<strong style="color:var(--alarm)">${txt('ui.chain_broken_entry_broken', { broken_at: r.integrity.broken_at })}</strong> ${
+    : `<strong style="color:var(--alarm)">${esc(txt('ui.chain_broken_entry_broken', { broken_at: r.integrity.broken_at }))}</strong> ${
         r.integrity.detail ? esc(r.integrity.detail)
           : 'The log has been altered since it was written.'}`;
   $('#audit-body').innerHTML = r.entries.map(e => `
     <div class="entry">
-      <span class="when">${e.at}</span>
-      <span class="what">${e.action}</span>
+      <span class="when">${esc(e.at)}</span>
+      <span class="what">${esc(e.action)}</span>
       <span class="detail">${esc(e.detail || '')}</span>
     </div>`).join('');
   $('#dlg-audit').showModal();

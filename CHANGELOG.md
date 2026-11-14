@@ -13,6 +13,13 @@ records, not how the code changed.
 
 ### Security
 
+- **Text from evidence or a case file can no longer run as script in the
+  interface.** An event log's event ID and record number, the audit log's
+  entries as stored in a case file, and a folder name in the file browser
+  were written into the page as they came; they are now shown as text. The
+  interface's pages are also served with a Content-Security-Policy that runs
+  only Strata's own script files, so text that reaches the page unescaped
+  anywhere else is displayed rather than executed.
 - **Unlocked BitLocker and LUKS volume keys are no longer saved in the case
   file.** The README always said they never were, but each unlock stored the
   volume key, so anyone holding a case could decrypt the volume. Keys now live
